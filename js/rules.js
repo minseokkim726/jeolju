@@ -176,13 +176,13 @@ export function normalizeFood(f) {
 }
 export const foodOf = (day) => normalizeFood(day && day.food);
 export const finishYes = (f) => !!f && (f.finish === 'meal' || f.finish === 'late');
-// 상세 표기: "안주 많이 · 고기, 국물·찌개 · 마무리 밥·면" (없는 부분은 뺀다)
+// 상세 표기(이름표 "안주" 옆에 붙는 글): "많이 · 고기, 국물·찌개 · 마무리 밥·면" (없는 부분은 뺀다, 셋 다 없으면 '')
 export function foodText(food) {
   const f = normalizeFood(food);
   if (!f) return '';
   const parts = [];
-  if (f.amount != null) parts.push(`안주 ${FOOD_AMOUNTS[f.amount]}`);
-  if (f.types.length) parts.push(`${f.amount == null ? '안주 ' : ''}${f.types.map((k) => FOOD_TYPE_LABEL[k]).join(', ')}`);
+  if (f.amount != null) parts.push(FOOD_AMOUNTS[f.amount]);
+  if (f.types.length) parts.push(f.types.map((k) => FOOD_TYPE_LABEL[k]).join(', '));
   if (f.finish) parts.push(`마무리 ${FOOD_FINISH[f.finish]}`);
   return parts.join(' · ');
 }

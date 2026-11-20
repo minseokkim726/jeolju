@@ -433,9 +433,14 @@ run('v1.3 안주', () => {
   t = R.toggleMany(t, 'soup'); t = R.toggleMany(t, 'meat'); t = R.toggleMany(t, 'fried');
   eq('종류: 여러 개 선택(순서 정렬)', t, ['meat', 'fried', 'soup']);
   eq('종류: 다시 누르면 그것만 해제', R.toggleMany(t, 'fried'), ['meat', 'soup']);
-  eq('상세 표기', R.foodText({ amount: 3, types: ['meat', 'soup'], finish: 'meal' }), '안주 많이 · 고기, 국물·찌개 · 마무리 밥·면');
-  eq('상세 표기: 종류만', R.foodText({ amount: null, types: ['dry_fruit'], finish: null }), '안주 마른안주·과일');
-  eq('상세 표기: 없으면 빈 글', R.foodText(null), '');
+  group('v1.3.1 안주 표기(이름표 "안주" 옆 글, 앞에 "안주" 없음)');
+  eq('양 있음', R.foodText({ amount: 3, types: ['meat', 'soup'], finish: 'meal' }), '많이 · 고기, 국물·찌개 · 마무리 밥·면');
+  eq('양만', R.foodText({ amount: 1, types: [], finish: null }), '적게');
+  eq('양 없이 종류만', R.foodText({ amount: null, types: ['dry_fruit'], finish: null }), '마른안주·과일');
+  eq('양 없이 종류·마무리', R.foodText({ amount: null, types: ['fried'], finish: 'late' }), '튀김·치킨 · 마무리 2차 야식');
+  eq('마무리만', R.foodText({ amount: null, types: [], finish: 'none' }), '마무리 없음');
+  eq('전부 없음 → 빈 글(줄 안 보임)', [R.foodText({ amount: null, types: [], finish: null }), R.foodText(null)], ['', '']);
+  eq('어떤 경우에도 "안주"로 시작하지 않음', [R.foodText({ amount: 2, types: ['etc'], finish: 'meal' }).startsWith('안주')], [false]);
   group('v1.3 안주 CSV');
   const H = R.CSV_HEADER.split(',');
   eq('머리글: food_amount, food_types, food_finish가 memo 바로 앞', H.slice(-4), ['food_amount', 'food_types', 'food_finish', 'memo']);
@@ -490,7 +495,7 @@ run('v1.3 v1.2 백업', () => {
 
 run('버전', () => {
   group('앱 버전');
-  eq('js/version.js 값(v1.3 또는 v1.2.1 형식)', /^v\d+\.\d+(\.\d+)?$/.test(APP_VERSION), true);
+  eq('js/version.js 값(v1.3.1 형식)', /^v\d+\.\d+(\.\d+)?$/.test(APP_VERSION), true);
 });
 
 // ---------- 통계(stats.js) ----------
