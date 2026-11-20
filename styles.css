@@ -326,3 +326,10 @@ a { color: inherit; text-decoration: none; }
 .period-chips { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px; }
 .period-chips .pill { padding: 0 2px; font-size: 15px; border-radius: 12px; white-space: nowrap; }
 .w-stepper .stepper-val.unsaved { color: #6B7377; font-weight: 500; }
+/* v1.3 안주 */
+.food { gap: 10px; }
+.food-row { display: flex; flex-direction: column; gap: 6px; }
+.food-k { font-size: 15px; font-weight: 500; }
+.food .pills .pill { padding: 0 12px; }
+.food-bars .hbar { grid-template-columns: 112px minmax(0, 1fr) 52px; }
+.stat-table tr.ref td { border-top: 2px solid var(--line-strong); color: var(--muted); }

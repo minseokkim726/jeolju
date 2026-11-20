@@ -314,7 +314,7 @@ run('백업 형식', () => {
   eq('CSV는 BOM으로 시작', csv.charCodeAt(0), 0xFEFF);
   eq('CSV 머리줄', csv.slice(1).split('\r\n')[0], R.CSV_HEADER);
   eq('CSV 머리줄: morning_condition 열이 있고 condition 단독 열은 없음(15번째 열)', [R.CSV_HEADER.split(',').includes('morning_condition'), R.CSV_HEADER.split(',').includes('condition'), R.CSV_HEADER.split(',').indexOf('morning_condition')], [true, false, 14]);
-  eq('CSV 한 줄', csv.slice(1).split('\r\n')[1], '2026-11-20,drank,planned,26,4,soju,0,soju:4,26,23:00,,1,,,,,,2,"회식, ""1차""만"');
+  eq('CSV 한 줄', csv.slice(1).split('\r\n')[1], '2026-11-20,drank,planned,26,4,soju,0,soju:4,26,23:00,,1,,,,,,2,,,,"회식, ""1차""만"');
 });
 
 run('v1.2 단위', () => {
@@ -416,9 +416,81 @@ run('v1.2 마신 이유', () => {
   eq('최대 5건', ST.recentReasons(many, '2026-11-01', '2026-11-20').length, 5);
 });
 
+run('v1.3 안주', () => {
+  group('v1.3 안주 기록 · 저장 형태');
+  eq('셋 다 비면 null', R.normalizeFood({ amount: null, types: [], finish: null }), null);
+  eq('없는 값도 null', [R.normalizeFood(null), R.normalizeFood(undefined)], [null, null]);
+  eq('일부만: 양만', R.normalizeFood({ amount: 3, types: [], finish: null }), { amount: 3, types: [], finish: null });
+  eq('일부만: 종류·마무리만(종류는 정해진 순서로)', R.normalizeFood({ amount: null, types: ['soup', 'meat'], finish: 'late' }), { amount: null, types: ['meat', 'soup'], finish: 'late' });
+  eq('모르는 값은 버림', R.normalizeFood({ amount: 7, types: ['pizza', 'fried'], finish: 'x' }), { amount: null, types: ['fried'], finish: null });
+  eq('새 기록의 food 기본값 null', R.emptyDay('2026-11-20').food, null);
+  group('v1.3 안주 칩 누르기');
+  eq('양: 보통 누름 → 2', R.toggleOne(null, 2), 2);
+  eq('양: 보통 다시 누름 → 해제', R.toggleOne(2, 2), null);
+  eq('양: 보통에서 많이 → 3(하나만)', R.toggleOne(2, 3), 3);
+  eq('마무리: 밥·면 다시 누름 → 해제', R.toggleOne('meal', 'meal'), null);
+  let t = [];
+  t = R.toggleMany(t, 'soup'); t = R.toggleMany(t, 'meat'); t = R.toggleMany(t, 'fried');
+  eq('종류: 여러 개 선택(순서 정렬)', t, ['meat', 'fried', 'soup']);
+  eq('종류: 다시 누르면 그것만 해제', R.toggleMany(t, 'fried'), ['meat', 'soup']);
+  eq('상세 표기', R.foodText({ amount: 3, types: ['meat', 'soup'], finish: 'meal' }), '안주 많이 · 고기, 국물·찌개 · 마무리 밥·면');
+  eq('상세 표기: 종류만', R.foodText({ amount: null, types: ['dry_fruit'], finish: null }), '안주 마른안주·과일');
+  eq('상세 표기: 없으면 빈 글', R.foodText(null), '');
+  group('v1.3 안주 CSV');
+  const H = R.CSV_HEADER.split(',');
+  eq('머리글: food_amount, food_types, food_finish가 memo 바로 앞', H.slice(-4), ['food_amount', 'food_types', 'food_finish', 'memo']);
+  const csv = R.buildCsv([
+    { ...R.emptyDay('2026-11-20'), status: 'drank', alcoholG: 26, drinks: [{ type: 'soju', count: 4 }], food: { amount: 3, types: ['meat', 'soup'], finish: 'late' }, memo: '회식' },
+    { ...R.emptyDay('2026-11-21'), status: 'drank', alcoholG: 13, drinks: [{ type: 'soju', count: 2 }], food: { amount: null, types: [], finish: 'none' } },
+  ], [goal('2026-11-16', 2)], S);
+  const L = csv.slice(1).split('\r\n');
+  eq('값은 한글: 많이 · 고기|국물·찌개 · 2차 야식', L[1].split(',').slice(-4), ['많이', '고기|국물·찌개', '2차 야식', '회식']);
+  eq('일부만: 마무리 없음', L[2].split(',').slice(-4), ['', '', '없음', '']);
+});
+
+run('v1.3 안주 통계', () => {
+  group('v1.3 안주 통계 · 다음 날 아침 체중');
+  const F = (amount, types, finish, extra = {}) => ({ status: 'drank', alcoholG: 26, food: { amount, types, finish }, ...extra });
+  const two = days({ '2026-11-02': F(3, ['meat'], 'meal'), '2026-11-04': F(1, [], null), '2026-11-05': 20 });
+  const s2 = ST.foodStats(two, '2026-11-01', '2026-11-08');
+  eq('최소 표본: 안주 기록 2일 → 안 보임(1일 더)', [s2.drinkDays, s2.withFood, s2.enough, s2.need], [3, 2, false, 1]);
+  const D = days({
+    '2026-11-02': F(3, ['meat', 'soup'], 'meal', { weightKg: 75.0 }), '2026-11-03': { status: 'sober', weightKg: 75.6 },
+    '2026-11-04': F(3, ['meat'], 'late', { weightKg: 75.2 }), '2026-11-05': { status: 'sober', weightKg: 75.6 },
+    '2026-11-06': F(1, ['dry_fruit'], 'none', { weightKg: 75.3 }), '2026-11-07': { status: 'sober', weightKg: 75.5 },
+    '2026-11-08': { status: 'sober', weightKg: 75.4 }, '2026-11-09': { status: 'sober', weightKg: 75.2 },
+    '2026-11-10': F(2, ['fried'], null), '2026-11-11': 20,
+    '2026-11-12': F(1, [], 'none', { weightKg: 75.1 }), '2026-11-14': { status: 'sober', weightKg: 75.0 },
+  });
+  const fs = ST.foodStats(D, '2026-11-01', '2026-11-14');
+  eq('요약: 음주일 6 · 안주 5 · 많이 2 · 마무리 2(밥·면 1, 야식 1)', [fs.drinkDays, fs.withFood, fs.many, fs.finish, fs.meal, fs.late, fs.enough], [6, 5, 2, 2, 1, 1, true]);
+  eq('종류별 횟수(많은 순)', fs.types.map((t) => [t.key, t.count]), [['meat', 2], ['fried', 1], ['soup', 1], ['dry_fruit', 1]]);
+  const fw = ST.foodWeightChange(D, '2026-11-01', '2026-11-14');
+  eq('많이: 짝 2일(+0.6, +0.4) → +0.5', fw.a3, { n: 2, avg: 0.5 });
+  eq('적게: 짝 1일(11/12는 다음 날 체중 없음) → –', fw.a1, { n: 1, avg: null });
+  eq('보통: 체중 없음 → 0일', fw.a2, { n: 0, avg: null });
+  eq('마무리 있음 2일 평균 +0.5 · 없음 1일 –', [fw.finYes, fw.finNo], [{ n: 2, avg: 0.5 }, { n: 1, avg: null }]);
+  eq('안 마신 날 비교 줄: −0.4 −0.3 −0.1 −0.2 → −0.25 (4일)', fw.sober, { n: 4, avg: -0.25 });
+  eq('기간 밖 날은 세지 않음', ST.foodWeightChange(D, '2026-11-06', '2026-11-08').a3.n, 0);
+});
+
+run('v1.3 v1.2 백업', () => {
+  group('v1.3 v1.2 형식 백업(food 없음)');
+  const old = { ...R.emptyDay('2026-11-10'), status: 'drank', alcoholG: 26 };
+  delete old.food;
+  const bk = { app: 'jeolju', schemaVersion: 2, data: { days: [old], goals: [goal('2026-11-09', 2)], weekPlans: [], settings: {}, meta: [] } };
+  eq('가져오기 형식 통과(schemaVersion 2 그대로)', [R.validateBackup(bk).ok, R.SCHEMA_VERSION], [true, 2]);
+  const m = { '2026-11-10': old };
+  eq('food 없으면 null로 읽음', [R.foodOf(old), R.foodText(old.food)], [null, '']);
+  const fs = ST.foodStats(m, '2026-11-09', '2026-11-15');
+  eq('통계: 음주일 1 · 안주 0 → 3일 더', [fs.drinkDays, fs.withFood, fs.need], [1, 0, 3]);
+  eq('체중 변화 표도 오류 없음', ST.foodWeightChange(m, '2026-11-09', '2026-11-15').sober, { n: 0, avg: null });
+  eq('CSV 안주 칸은 비어 있음', R.buildCsv([old], [], S).slice(1).split('\r\n')[1].split(',').slice(-4), ['', '', '', '']);
+});
+
 run('버전', () => {
   group('앱 버전');
-  eq('js/version.js 값(v1.2 또는 v1.2.1 형식)', /^v\d+\.\d+(\.\d+)?$/.test(APP_VERSION), true);
+  eq('js/version.js 값(v1.3 또는 v1.2.1 형식)', /^v\d+\.\d+(\.\d+)?$/.test(APP_VERSION), true);
 });
 
 // ---------- 통계(stats.js) ----------

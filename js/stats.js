@@ -11,7 +11,7 @@ export const PERIODS = [
 ];
 
 // 최소 표본
-export const MIN = { weekday: 3, planCompare: 3, weeks: 2, weightWeeks: 3, baselineRecent: 7 };
+export const MIN = { weekday: 3, planCompare: 3, weeks: 2, weightWeeks: 3, baselineRecent: 7, food: 3, foodGroup: 2 };
 
 export function periodRange(key, daysMap, s, today) {
   const ws = R.weekStartOf(today);
@@ -107,6 +107,53 @@ export function byOccasion(daysMap, s, from, to) {
 export function recentReasons(daysMap, from, to, n = 5) {
   return R.dateRange(from, to).reverse().filter((d) => R.isDrinkDay(daysMap[d]) && (daysMap[d].memo || '').trim())
     .slice(0, n).map((d) => ({ date: d, g: daysMap[d].alcoholG, memo: daysMap[d].memo.trim() }));
+}
+
+// 5-2. 안주(v1.3): 요약 숫자 + 종류별 횟수(많은 순). 안주가 입력된 음주일이 3일 미만이면 enough=false
+export function foodStats(daysMap, from, to) {
+  const o = { drinkDays: 0, withFood: 0, many: 0, finish: 0, meal: 0, late: 0, types: [] };
+  const cnt = {};
+  for (const d of R.dateRange(from, to)) {
+    const day = daysMap[d];
+    if (!R.isDrinkDay(day)) continue;
+    o.drinkDays++;
+    const f = R.foodOf(day);
+    if (!f) continue;
+    o.withFood++;
+    if (f.amount === 3) o.many++;
+    if (f.finish === 'meal') { o.finish++; o.meal++; }
+    if (f.finish === 'late') { o.finish++; o.late++; }
+    for (const k of f.types) cnt[k] = (cnt[k] || 0) + 1;
+  }
+  o.types = R.FOOD_TYPES.filter((x) => cnt[x.key]).map((x) => ({ key: x.key, label: x.label, count: cnt[x.key] }))
+    .sort((a, b) => b.count - a.count); // 같은 횟수면 정해진 순서(안정 정렬)
+  o.enough = o.withFood >= MIN.food;
+  o.need = Math.max(0, MIN.food - o.withFood);
+  return o;
+}
+
+// 5-3. 다음 날 아침 체중 변화(D+1 아침 − D 아침). 날 D가 기간 안이고 두 체중이 모두 있을 때만.
+// 묶음: 안주 양(적게·보통·많이), 마무리(없음·있음), 비교용 안 마신 날. 2일 미만 묶음은 avg=null("–")
+export function foodWeightChange(daysMap, from, to) {
+  const g = { a1: [], a2: [], a3: [], finNo: [], finYes: [], sober: [] };
+  for (const d of R.dateRange(from, to)) {
+    const day = daysMap[d];
+    const next = daysMap[R.addDays(d, 1)];
+    if (!day || day.weightKg == null || !next || next.weightKg == null) continue;
+    const ch = next.weightKg - day.weightKg;
+    if (R.isEntered(day) && !R.isDrinkDay(day)) { g.sober.push(ch); continue; }
+    if (!R.isDrinkDay(day)) continue;
+    const f = R.foodOf(day);
+    if (!f) continue;
+    if (f.amount) g[`a${f.amount}`].push(ch);
+    if (f.finish === 'none') g.finNo.push(ch);
+    else if (R.finishYes(f)) g.finYes.push(ch);
+  }
+  const out = {};
+  for (const [k, a] of Object.entries(g)) {
+    out[k] = { n: a.length, avg: a.length >= MIN.foodGroup ? Math.round((a.reduce((x, y) => x + y, 0) / a.length) * 100) / 100 : null };
+  }
+  return out;
 }
 
 // 6. 주종 비율(g 기준). 숫자 직접 입력분은 'manual'

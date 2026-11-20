@@ -84,6 +84,28 @@ export function render(root, d, ctx) {
       <tbody>${oc.map((o) => `<tr><td>${esc(o.occasion)}</td><td class="num">${o.count}</td><td class="num">${cnt(o.avgG)}</td><td class="num">${o.heavy}</td></tr>`).join('')}</tbody></table>` : ''}${rrHtml}`));
   }
 
+  // 5-2. 안주(v1.3)
+  const fs = ST.foodStats(d.days, from, to);
+  {
+    let body;
+    if (!fs.enough) body = `<div class="empty-note">안주 기록이 ${fs.need}일 더 쌓이면 보여요</div>`;
+    else {
+      const fw = ST.foodWeightChange(d.days, from, to);
+      const mx = Math.max(1, ...fs.types.map((t) => t.count));
+      const kg = (v) => (v == null ? '–' : `${v > 0 ? '+' : v < 0 ? '−' : '±'}${Math.abs(v).toFixed(2)}kg`);
+      const row = (label, x) => `<tr><td>${label}</td><td class="num">${kg(x.avg)}</td><td class="num">${x.n}일</td></tr>`;
+      body = `<div class="stat-lines"><div>음주일 ${fs.drinkDays}일 중 안주 기록 ${fs.withFood}일 · 많이 ${fs.many}일 · 마무리 ${fs.finish}일(밥·면 ${fs.meal}, 2차 야식 ${fs.late})</div></div>
+        ${fs.types.length ? `<div class="label-strong" style="margin-top:6px">종류별 횟수</div><div class="hbars food-bars">${fs.types.map((t) => `<div class="hbar"><span>${esc(t.label)}</span><div class="bar"><span style="width:${(t.count / mx) * 100}%"></span></div><span class="v">${t.count}번</span></div>`).join('')}</div>` : ''}
+        <div class="label-strong" style="margin-top:10px">다음 날 아침 체중 변화</div>
+        <table class="stat-table"><thead><tr><th>그날</th><th class="num">평균 변화</th><th class="num">날 수</th></tr></thead><tbody>
+          ${row('안주 적게', fw.a1)}${row('안주 보통', fw.a2)}${row('안주 많이', fw.a3)}
+          ${row('마무리 없음', fw.finNo)}${row('마무리 있음', fw.finYes)}
+          <tr class="ref"><td>안 마신 날</td><td class="num">${kg(fw.sober.avg)}</td><td class="num">${fw.sober.n}일</td></tr></tbody></table>
+        <div class="tiny">그날 아침과 다음 날 아침 체중이 모두 있는 날만 · 2일 미만은 –</div>`;
+    }
+    parts.push(card('안주', body));
+  }
+
   // 6. 주종 비율
   const dt = ST.drinkTypes(d.days, from, to);
   if (dt.items.length) {

@@ -8,6 +8,7 @@ function rng(seed) {
 
 export function makeSample(today) {
   const rand = rng(20261120);
+  const frand = rng(20261130); // 안주용(기존 예시 값이 바뀌지 않게 따로)
   const curWs = R.weekStartOf(today);
   const start = R.addDays(curWs, -35); // 6주 전 월요일
   const iso = (d) => `${d}T09:00:00.000Z`;
@@ -63,6 +64,18 @@ export function makeSample(today) {
         if (rand() < 0.65) day.plan = { limitG: 26, homeBy: '23:30', altNonAlc: rand() < 0.5, note: '', createdAt: iso(date) };
         if (day.plan && day.plan.altNonAlc) day.altNonAlcDone = rand() < 0.6;
         day.condition = day.alcoholG >= 45.5 ? 1 : rand() < 0.5 ? 2 : 1;
+        // 안주: 음주일의 약 70%. 과음한 날은 많이·마무리 있음 쪽으로
+        if (frand() < 0.7) {
+          const heavy = day.alcoholG >= 45.5;
+          const keys = R.FOOD_TYPES.map((x) => x.key);
+          const types = keys.filter(() => frand() < 0.3);
+          if (!types.length) types.push(keys[Math.floor(frand() * keys.length)]);
+          day.food = R.normalizeFood({
+            amount: heavy ? (frand() < 0.8 ? 3 : 2) : frand() < 0.25 ? null : 1 + Math.floor(frand() * 3),
+            types,
+            finish: heavy ? (frand() < 0.5 ? 'meal' : 'late') : ['none', 'none', 'meal', 'late', null][Math.floor(frand() * 5)],
+          });
+        }
       } else {
         day.status = 'sober';
         day.condition = rand() < 0.7 ? 3 : 2;
@@ -71,6 +84,16 @@ export function makeSample(today) {
       if (k >= 0 && rand() < 0.5) day.memo = ['팀 회식', '스트레스', '그냥 당겨서', '친구 생일', '송년회 1차'][Math.floor(rand() * 5)];
       days.push(day);
     }
+  }
+  // 체중이 빈 날(입력한 날만)을 채운다: 전날 마셨으면 오르고(안주 많이·마무리면 더), 안 마셨으면 조금 내린다
+  let prev = null;
+  for (const x of days) {
+    if (x.weightKg == null && x.status !== 'none' && prev && prev.weightKg != null) {
+      const f = R.foodOf(prev);
+      const up = !R.isDrinkDay(prev) ? -0.1 - frand() * 0.2 : 0.1 + frand() * 0.2 + (f && f.amount === 3 ? 0.2 : 0) + (R.finishYes(f) ? 0.2 : 0);
+      x.weightKg = Math.round((prev.weightKg + up) * 10) / 10;
+    }
+    prev = x;
   }
   // 컨디션은 "그날 아침" 뜻(v2): 위에서는 마신 날 기준으로 정했으므로 다음 날로 옮긴다. 오늘은 직접 눌러 보도록 비운다.
   const moved = R.migrateDaysV1toV2(days).filter((x) => x.date !== today || x.status !== 'none' || x.weightKg != null);

@@ -60,6 +60,9 @@ export function mountRecord(el, d, ctx, opts) {
   }
 
   const occ = { v: day.occasion };
+  // 안주(v1.3): 양·마무리는 하나만(다시 누르면 해제), 종류는 여러 개
+  const f0 = R.foodOf(day) || { amount: null, types: [], finish: null };
+  const fd = { amount: f0.amount, types: [...f0.types], finish: f0.finish };
   const navs = opts.onDate ? {
     prev: `<button type="button" class="icon-btn" data-nav="-1" aria-label="이전 날">◀</button>`,
     next: `<button type="button" class="icon-btn" data-nav="1" aria-label="다음 날" ${date >= d.today ? 'disabled' : ''}>▶</button>`,
@@ -90,6 +93,15 @@ export function mountRecord(el, d, ctx, opts) {
         </div>
         ${s.showOccasion ? `<div class="field"><div class="label-strong" id="rc-occ">상황 <span class="opt">(선택)</span></div>
           <div class="pills" role="group" aria-labelledby="rc-occ">${R.OCCASIONS.map((o) => `<button type="button" class="pill" data-occ="${o}" aria-pressed="${day.occasion === o}">${o}</button>`).join('')}</div></div>` : ''}
+        <div class="field food" role="group" aria-labelledby="rc-food">
+          <div class="label-strong" id="rc-food">안주 <span class="opt">(선택)</span></div>
+          <div class="food-row"><div class="food-k" id="rc-fa">양</div>
+            <div class="cond" role="group" aria-labelledby="rc-fa">${Object.entries(R.FOOD_AMOUNTS).map(([k, v]) => `<button type="button" class="pill" data-famt="${k}" aria-pressed="${fd.amount === Number(k)}">${v}</button>`).join('')}</div></div>
+          <div class="food-row"><div class="food-k" id="rc-ft">종류 <span class="opt">(여러 개)</span></div>
+            <div class="pills" role="group" aria-labelledby="rc-ft">${R.FOOD_TYPES.map((x) => `<button type="button" class="pill" data-ftype="${x.key}" aria-pressed="${fd.types.includes(x.key)}">${esc(x.label)}</button>`).join('')}</div></div>
+          <div class="food-row"><div class="food-k" id="rc-ff">마무리 <span class="opt">볶음밥·냉면·라면 같은 마무리</span></div>
+            <div class="cond" role="group" aria-labelledby="rc-ff">${Object.entries(R.FOOD_FINISH).map(([k, v]) => `<button type="button" class="pill" data-ffin="${k}" aria-pressed="${fd.finish === k}">${v}</button>`).join('')}</div></div>
+        </div>
         <div class="field"><label for="rc-memo">마신 이유·한 줄 메모 <span class="opt">(선택)</span></label>
           <input id="rc-memo" class="input" type="text" maxlength="200" value="${esc(day.memo || '')}" placeholder="팀 회식, 스트레스, 그냥 당겨서"></div>
         ${plan && plan.altNonAlc ? `<label class="check"><input type="checkbox" id="rc-alt" ${day.altNonAlcDone ? 'checked' : ''}> 무알콜 교대 했어요</label>` : ''}
@@ -182,19 +194,27 @@ export function mountRecord(el, d, ctx, opts) {
     occ.v = occ.v === b.dataset.occ ? null : b.dataset.occ;
     el.querySelectorAll('[data-occ]').forEach((x) => x.setAttribute('aria-pressed', String(x.dataset.occ === occ.v)));
   }));
+  const paintFood = () => {
+    el.querySelectorAll('[data-famt]').forEach((x) => x.setAttribute('aria-pressed', String(Number(x.dataset.famt) === fd.amount)));
+    el.querySelectorAll('[data-ftype]').forEach((x) => x.setAttribute('aria-pressed', String(fd.types.includes(x.dataset.ftype))));
+    el.querySelectorAll('[data-ffin]').forEach((x) => x.setAttribute('aria-pressed', String(x.dataset.ffin === fd.finish)));
+  };
+  el.querySelectorAll('[data-famt]').forEach((b) => b.addEventListener('click', () => { fd.amount = R.toggleOne(fd.amount, Number(b.dataset.famt)); paintFood(); }));
+  el.querySelectorAll('[data-ftype]').forEach((b) => b.addEventListener('click', () => { fd.types = R.toggleMany(fd.types, b.dataset.ftype); paintFood(); }));
+  el.querySelectorAll('[data-ffin]').forEach((b) => b.addEventListener('click', () => { fd.finish = R.toggleOne(fd.finish, b.dataset.ffin); paintFood(); }));
   q('[data-act="save"]').addEventListener('click', async () => {
     const g = totalG();
     if (!(g > 0)) { q('[data-el="err"]').textContent = '마신 양을 적어 주세요. 안 마셨으면 [안 마셨어요]를 눌러 주세요.'; return; }
     const drinks = st.chips.filter((c) => c.count > 0).map((c) => ({ type: c.type, count: c.count }));
     if (st.manualG > 0) drinks.push({ type: 'manual', g: Math.round(st.manualG * 1000) / 1000 });
     const alt = q('#rc-alt');
-    await repo.saveDrank(date, { drinks, homeAt: q('#rc-home').value || null, occasion: occ.v, altNonAlcDone: alt ? alt.checked : null, memo: q('#rc-memo').value.trim() });
+    await repo.saveDrank(date, { drinks, homeAt: q('#rc-home').value || null, occasion: occ.v, altNonAlcDone: alt ? alt.checked : null, memo: q('#rc-memo').value.trim(), food: { ...fd } });
     toast('기록했어요');
     ctx.refresh();
   });
   const clearBtn = q('[data-act="clear"]');
   if (clearBtn) clearBtn.addEventListener('click', async () => {
-    const ok = await ask({ title: '이 날 기록을 지울까요?', message: '마신 양·귀가·상황이 지워지고 미입력으로 돌아갑니다. 계획·메모와 그날 아침 컨디션·체중은 남아요.', choices: [{ label: '지우기', value: true, kind: 'primary' }, { label: '취소', value: false }] });
+    const ok = await ask({ title: '이 날 기록을 지울까요?', message: '마신 양·귀가·상황·안주가 지워지고 미입력으로 돌아갑니다. 계획·메모와 그날 아침 컨디션·체중은 남아요.', choices: [{ label: '지우기', value: true, kind: 'primary' }, { label: '취소', value: false }] });
     if (!ok) return;
     await repo.clearEntry(date);
     toast('지웠어요');

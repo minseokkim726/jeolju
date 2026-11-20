@@ -151,6 +151,7 @@ function renderDetail(el, d, ctx, date) {
   }
   if (day && day.homeAt) add('귀가', day.homeAt);
   if (day && day.occasion) add('상황', day.occasion);
+  if (R.isDrinkDay(day)) add('안주', R.foodText(day.food));
   if (day && day.condition) add('아침 컨디션', `그날 아침 ${R.CONDITIONS[day.condition]}`);
   if (day && day.weightKg != null) add('아침 체중', `${day.weightKg}kg`);
   if (day && day.memo) add('메모', day.memo);

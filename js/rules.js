@@ -28,6 +28,18 @@ export const DRINKS = [
 export const DRINK_BY_KEY = Object.fromEntries(DRINKS.map((d) => [d.key, d]));
 export const OCCASIONS = ['회식', '모임', '가족', '혼술', '기타'];
 export const CONDITIONS = { 1: '나쁨', 2: '보통', 3: '좋음' };
+// v1.3 안주(음주일만, 모두 선택). 칼로리 계산은 하지 않는다.
+export const FOOD_AMOUNTS = { 1: '적게', 2: '보통', 3: '많이' };
+export const FOOD_TYPES = [
+  { key: 'meat', label: '고기' },
+  { key: 'fried', label: '튀김·치킨' },
+  { key: 'seafood', label: '회·해산물' },
+  { key: 'soup', label: '국물·찌개' },
+  { key: 'dry_fruit', label: '마른안주·과일' },
+  { key: 'etc', label: '기타' },
+];
+export const FOOD_TYPE_LABEL = Object.fromEntries(FOOD_TYPES.map((x) => [x.key, x.label]));
+export const FOOD_FINISH = { none: '없음', meal: '밥·면', late: '2차 야식' };
 export const KCAL_PER_G = 7;
 
 export const DEFAULT_SETTINGS = {
@@ -125,7 +137,7 @@ export function defaultEntryDate(now, daysMap, settings = DEFAULT_SETTINGS) {
 export function emptyDay(date) {
   return {
     date, plan: null, status: 'none', alcoholG: 0, drinks: [], homeAt: null, altNonAlcDone: null,
-    occasion: null, condition: null, weightKg: null, memo: '',
+    occasion: null, condition: null, weightKg: null, memo: '', food: null,
     sources: { alcohol: 'manual', weight: 'manual' }, updatedAt: null,
   };
 }
@@ -142,6 +154,37 @@ export function drinksG(drinks) {
 export function drinksText(drinks, unit) {
   return (drinks || []).filter((d) => (d.type === 'manual' ? d.g > 0 : d.count > 0)).map((d) =>
     (d.type === 'manual' ? `직접 ${fmtCount(d.g, unit)}` : `${DRINK_BY_KEY[d.type] ? DRINK_BY_KEY[d.type].short : d.type} ${d.count}`)).join(' · ');
+}
+
+// ---------- 안주 (v1.3) ----------
+// 하나만 고르는 칩: 같은 것을 다시 누르면 해제
+export const toggleOne = (cur, v) => (cur === v ? null : v);
+// 여러 개 고르는 칩: 있으면 빼고 없으면 넣는다(정해진 순서 유지)
+export function toggleMany(list, key) {
+  const set = new Set(list || []);
+  if (set.has(key)) set.delete(key); else set.add(key);
+  return FOOD_TYPES.map((x) => x.key).filter((k) => set.has(k));
+}
+// 저장 형태로 정리: 셋 다 비면 null, 아니면 { amount, types, finish } (모르는 값은 버림)
+export function normalizeFood(f) {
+  if (!f || typeof f !== 'object') return null;
+  const amount = [1, 2, 3].includes(Number(f.amount)) ? Number(f.amount) : null;
+  const types = FOOD_TYPES.map((x) => x.key).filter((k) => (f.types || []).includes(k));
+  const finish = FOOD_FINISH[f.finish] ? f.finish : null;
+  if (amount == null && !types.length && finish == null) return null;
+  return { amount, types, finish };
+}
+export const foodOf = (day) => normalizeFood(day && day.food);
+export const finishYes = (f) => !!f && (f.finish === 'meal' || f.finish === 'late');
+// 상세 표기: "안주 많이 · 고기, 국물·찌개 · 마무리 밥·면" (없는 부분은 뺀다)
+export function foodText(food) {
+  const f = normalizeFood(food);
+  if (!f) return '';
+  const parts = [];
+  if (f.amount != null) parts.push(`안주 ${FOOD_AMOUNTS[f.amount]}`);
+  if (f.types.length) parts.push(`${f.amount == null ? '안주 ' : ''}${f.types.map((k) => FOOD_TYPE_LABEL[k]).join(', ')}`);
+  if (f.finish) parts.push(`마무리 ${FOOD_FINISH[f.finish]}`);
+  return parts.join(' · ');
 }
 
 // 체중 칸: 그날 저장한 값이 있으면 그것(saved), 없으면 그 전 가장 최근 값(저장 안 된 기본값). 둘 다 없으면 kg null
@@ -427,7 +470,7 @@ export function validateBackup(obj) {
 }
 
 // ---------- CSV (한 줄 = 하루, UTF-8 BOM) ----------
-export const CSV_HEADER = 'date,status,day_result,alcohol_g,alcohol_display,unit,heavy,drinks,plan_limit_g,plan_home_by,home_at,alt_nonalc_plan,alt_nonalc_done,occasion,morning_condition,weight_kg,weight_source,week_goal_days,memo';
+export const CSV_HEADER = 'date,status,day_result,alcohol_g,alcohol_display,unit,heavy,drinks,plan_limit_g,plan_home_by,home_at,alt_nonalc_plan,alt_nonalc_done,occasion,morning_condition,weight_kg,weight_source,week_goal_days,food_amount,food_types,food_finish,memo';
 const csvCell = (v) => {
   if (v == null) return '';
   const t = String(v);
@@ -439,12 +482,15 @@ export function buildCsv(daysList, goals, s) {
     const goal = goalForWeek(goals, weekStartOf(d.date));
     const drinks = (d.drinks || []).map((x) => (x.type === 'manual' ? `manual:${x.g}g` : `${x.type}:${x.count}`)).join('|');
     const b = (v) => (v == null ? '' : v ? 1 : 0);
+    const f = foodOf(d);
     lines.push([
       d.date, d.status, dayResult(d, s), d.alcoholG, isEntered(d) ? toDisplay(d.alcoholG, s.unit) : '', s.unit,
       isEntered(d) ? (isHeavy(d, s) ? 1 : 0) : '', drinks,
       d.plan ? d.plan.limitG : '', d.plan ? d.plan.homeBy : '', d.homeAt, d.plan ? b(d.plan.altNonAlc) : '', b(d.altNonAlcDone),
       d.occasion, d.condition, d.weightKg, d.weightKg != null ? (d.sources && d.sources.weight) || 'manual' : '',
-      goal ? goal.weeklyDrinkDaysMax : '', d.memo,
+      goal ? goal.weeklyDrinkDaysMax : '',
+      f && f.amount != null ? FOOD_AMOUNTS[f.amount] : '', f ? f.types.map((k) => FOOD_TYPE_LABEL[k]).join('|') : '', f && f.finish ? FOOD_FINISH[f.finish] : '',
+      d.memo,
     ].map(csvCell).join(','));
   }
   return '﻿' + lines.join('\r\n') + '\r\n';

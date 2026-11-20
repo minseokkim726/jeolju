@@ -119,16 +119,16 @@ async function getDay(date) {
 export async function patchDay(date, patch) {
   const cur = await getDay(date);
   const next = { ...cur, ...patch, date, updatedAt: new Date().toISOString() };
-  if (next.status === 'sober') { next.alcoholG = 0; next.drinks = []; next.homeAt = null; next.altNonAlcDone = null; next.occasion = null; }
+  if (next.status === 'sober') { next.alcoholG = 0; next.drinks = []; next.homeAt = null; next.altNonAlcDone = null; next.occasion = null; next.food = null; }
   await write({ put: { days: [next] } });
   return next;
 }
 
 export const saveSober = (date) => patchDay(date, { status: 'sober' });
-export const saveDrank = (date, { drinks, homeAt, occasion, altNonAlcDone, memo }) =>
-  patchDay(date, { status: 'drank', drinks, alcoholG: R.drinksG(drinks), homeAt: homeAt || null, occasion: occasion || null, altNonAlcDone: altNonAlcDone ?? null, ...(memo != null ? { memo } : {}), sources: { alcohol: 'manual', weight: 'manual' } });
+export const saveDrank = (date, { drinks, homeAt, occasion, altNonAlcDone, memo, food }) =>
+  patchDay(date, { status: 'drank', drinks, alcoholG: R.drinksG(drinks), homeAt: homeAt || null, occasion: occasion || null, altNonAlcDone: altNonAlcDone ?? null, ...(memo != null ? { memo } : {}), ...(food !== undefined ? { food: R.normalizeFood(food) } : {}), sources: { alcohol: 'manual', weight: 'manual' } });
 // 입력 지우기(계획·컨디션·체중·메모는 남긴다)
-export const clearEntry = (date) => patchDay(date, { status: 'none', alcoholG: 0, drinks: [], homeAt: null, altNonAlcDone: null, occasion: null });
+export const clearEntry = (date) => patchDay(date, { status: 'none', alcoholG: 0, drinks: [], homeAt: null, altNonAlcDone: null, occasion: null, food: null });
 
 export async function savePlan(date, plan) {
   const cur = await getDay(date);
