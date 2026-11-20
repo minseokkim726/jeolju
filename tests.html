@@ -1,0 +1,500 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>절주노트 규칙 시험</title>
+<style>
+  body { margin: 0; padding: 16px; font-family: 'Noto Sans KR','Apple SD Gothic Neo','Malgun Gothic',system-ui,sans-serif; background: #F4F5F2; color: #1F2A2E; }
+  h1 { font-size: 20px; margin: 0 0 8px; }
+  #summary { font-size: 16px; font-weight: 700; margin: 0 0 12px; padding: 10px 14px; border-radius: 12px; }
+  #summary.pass { background: #DDEFE9; color: #1F5A4D; }
+  #summary.fail { background: #FBE9D3; color: #7A3F06; }
+  .sample { background: #fff; border-radius: 12px; padding: 12px 14px; margin: 0 0 12px; font-size: 14px; line-height: 1.5; }
+  .sample button { min-height: 44px; padding: 0 16px; border-radius: 10px; border: none; background: #2F5D8A; color: #fff; font-size: 15px; font-weight: 700; }
+  .sample a { color: #1F4268; font-weight: 700; }
+  table { border-collapse: collapse; width: 100%; background: #fff; font-size: 13px; }
+  th, td { border-bottom: 1px solid #E1E4DF; padding: 6px 8px; text-align: left; vertical-align: top; }
+  th { background: #ECEEEA; }
+  td.r { font-weight: 700; white-space: nowrap; }
+  tr.ok td.r { color: #2E7D6B; }
+  tr.ng td.r { color: #7A3F06; }
+  tr.ng { background: #FBE9D3; }
+  tr.group td { background: #F4F5F2; font-weight: 700; }
+  code { font-size: 12px; word-break: break-all; }
+</style>
+</head>
+<body>
+<h1>절주노트 규칙 시험 (rules.js · stats.js)</h1>
+<div id="summary">시험 중…</div>
+<div class="sample">
+  <b>예시 6주 데이터</b> — 실제 기록과 섞이지 않게 별도 저장소(jeolju-demo)에 넣습니다.<br>
+  <button type="button" id="seed">예시 6주 데이터 넣기</button>
+  <span id="seed-msg"></span>
+  <div><a href="./?demo=1#/cal">예시 데이터로 앱 열기 →</a></div>
+</div>
+<table>
+  <thead><tr><th>시험</th><th>기대값</th><th>실제값</th><th>결과</th></tr></thead>
+  <tbody id="rows"></tbody>
+</table>
+<script type="module">
+import * as R from './js/rules.js';
+import * as ST from './js/stats.js';
+import { makeSample } from './js/sample.js';
+import { APP_VERSION } from './js/version.js';
+import { projectLine } from './js/screens/today.js';
+
+const rows = document.getElementById('rows');
+let pass = 0, fail = 0;
+function group(name) {
+  const tr = document.createElement('tr');
+  tr.className = 'group';
+  tr.innerHTML = '<td colspan="4"></td>';
+  tr.firstChild.textContent = name;
+  rows.appendChild(tr);
+}
+function eq(name, actual, expected) {
+  const a = JSON.stringify(actual), e = JSON.stringify(expected);
+  const ok = a === e;
+  ok ? pass++ : fail++;
+  const tr = document.createElement('tr');
+  tr.className = ok ? 'ok' : 'ng';
+  for (const [txt, cls] of [[name], [e, 'c'], [a, 'c'], [ok ? '통과' : '실패', 'r']]) {
+    const td = document.createElement('td');
+    if (cls === 'c') { const c = document.createElement('code'); c.textContent = txt; td.appendChild(c); } else td.textContent = txt;
+    if (cls === 'r') td.className = 'r';
+    tr.appendChild(td);
+  }
+  rows.appendChild(tr);
+}
+function run(name, fn) { try { fn(); } catch (err) { eq(`${name} (예외)`, String(err && err.stack || err), '예외 없음'); } }
+
+const S = { ...R.DEFAULT_SETTINGS, startDate: '2026-11-02' };
+// 기록 만들기: { 날짜: 값 } — 0 = 안 마심, 숫자 = 마신 g, 객체 = 그대로 덮어쓰기
+function days(map) {
+  const out = {};
+  for (const [date, v] of Object.entries(map)) {
+    const d = R.emptyDay(date);
+    if (v === 0) d.status = 'sober';
+    else if (typeof v === 'number') { d.status = 'drank'; d.alcoholG = v; d.drinks = [{ type: 'manual', g: v }]; }
+    else Object.assign(d, v);
+    out[date] = d;
+  }
+  return out;
+}
+const goal = (effectiveFrom, max, extra = {}) => ({ id: `g${effectiveFrom}${max}`, ...R.DEFAULT_GOAL, effectiveFrom, weeklyDrinkDaysMax: max, createdAt: `${effectiveFrom}T00:00:00Z`, ...extra });
+const at = (y, m, d, h, mi = 0) => new Date(y, m - 1, d, h, mi);
+const fill = (from, to, v) => { const o = {}; for (const d of R.dateRange(from, to)) o[d] = v; return o; };
+
+run('환산', () => {
+  group('환산·0.5 반올림');
+  eq('26g → 소주 4', R.toDisplay(26, 'soju'), 4);
+  eq('29.25g → 소주 4.5', R.toDisplay(29.25, 'soju'), 4.5);
+  eq('20g(맥주 500cc) → 소주 3 (3.08)', R.toDisplay(20, 'soju'), 3);
+  eq('22g → 소주 3.5 (3.38)', R.toDisplay(22, 'soju'), 3.5);
+  eq('45.5g → 표준잔 4.5 (4.55)', R.toDisplay(45.5, 'std'), 4.5);
+  eq('14g → 맥주 캔 1', R.toDisplay(14, 'beer'), 1);
+  eq('표시: 소주 4.5잔', R.fmtAmount(29.25, 'soju'), '소주 4.5잔');
+  eq('표시: 4.5표준잔', R.fmtAmount(45, 'std'), '4.5표준잔');
+  eq('표시: 맥주 2캔', R.fmtAmount(28, 'beer'), '맥주 2캔');
+  eq('소주 7잔 → 45.5g', R.fromDisplay(7, 'soju'), 45.5);
+  eq('알코올 칼로리 26g → 182kcal', R.kcalOf(26), 182);
+  eq('칩 합계: 소주3 + 500cc1 + 직접5g = 44.5g', R.drinksG([{ type: 'soju', count: 3 }, { type: 'beer_500', count: 1 }, { type: 'manual', g: 5 }]), 44.5);
+  eq('칩 내역 글', R.drinksText([{ type: 'soju', count: 3 }, { type: 'beer_500', count: 1 }], 'soju'), '소주 3 · 맥주 500cc 1');
+  eq('단위를 바꿔도 g 그대로(표시만 바뀜)', [R.toDisplay(26, 'soju'), R.toDisplay(26, 'std'), R.toDisplay(26, 'beer')], [4, 2.5, 2]);
+});
+
+run('과음 경계', () => {
+  group('과음 경계 (기준 45.5g)');
+  eq('45.4g → drank', R.dayResult(days({ '2026-11-20': 45.4 })['2026-11-20'], S), 'drank');
+  eq('45.5g → heavy', R.dayResult(days({ '2026-11-20': 45.5 })['2026-11-20'], S), 'heavy');
+  eq('과음 기준 변경(39g): 39g → heavy', R.dayResult(days({ '2026-11-20': 39 })['2026-11-20'], { ...S, heavyG: 39 }), 'heavy');
+});
+
+run('귀가', () => {
+  group('귀가 시각 자정 넘김 (06:00 이전은 다음 날)');
+  eq('00:10 → 1450분', R.timeToMin('00:10'), 1450);
+  eq('23:30 목표, 00:10 귀가 → 40분 늦음', R.homeLateMin('00:10', '23:30'), 40);
+  eq('23:30 목표, 23:00 귀가 → 0', R.homeLateMin('23:00', '23:30'), 0);
+  eq('23:00 목표, 05:59 귀가 → 419분', R.homeLateMin('05:59', '23:00'), 419);
+  eq('23:00 목표, 06:00 귀가(같은 날 아침으로 봄) → 0', R.homeLateMin('06:00', '23:00'), 0);
+  eq('귀가 시각 없음 → 0', R.homeLateMin(null, '23:00'), 0);
+});
+
+run('하루 판정', () => {
+  group('하루 판정 6종과 우선순위');
+  const plan = { limitG: 26, homeBy: '23:30', altNonAlc: false };
+  const D = days({
+    a: { status: 'none' },
+    b: 0,
+    c: 50,
+    d: { status: 'drank', alcoholG: 32.5, plan },
+    e: { status: 'drank', alcoholG: 26, plan, homeAt: '00:10' },
+    f: { status: 'drank', alcoholG: 26, plan, homeAt: '23:00' },
+    g: 20,
+    h: { status: 'drank', alcoholG: 50, plan },
+    i: { status: 'sober', plan },
+  });
+  eq('기록 없음 → none', R.dayResult(undefined, S), 'none');
+  eq('status none → none', R.dayResult(D.a, S), 'none');
+  eq('안 마심 → sober', R.dayResult(D.b, S), 'sober');
+  eq('50g 계획 없음 → heavy', R.dayResult(D.c, S), 'heavy');
+  eq('계획 26g, 32.5g → over', R.dayResult(D.d, S), 'over');
+  eq('계획 26g·23:30, 26g·00:10 귀가 → over(귀가 초과)', R.dayResult(D.e, S), 'over');
+  eq('계획 26g·23:30, 26g·23:00 → planned', R.dayResult(D.f, S), 'planned');
+  eq('계획 없이 20g → drank', R.dayResult(D.g, S), 'drank');
+  eq('우선순위: 계획 있고 50g → heavy(over보다 먼저)', R.dayResult(D.h, S), 'heavy');
+  eq('계획 있고 안 마심 → sober', R.dayResult(D.i, S), 'sober');
+  eq('계획 결과: 26g·00:10', R.planOutcome(D.e), { limitOk: true, homeOk: false, overG: 0, lateMin: 40 });
+});
+
+run('날짜', () => {
+  group('주 경계(일→월)·월말·연말');
+  eq('11/22(일)의 주 → 11/16(월)', R.weekStartOf('2026-11-22'), '2026-11-16');
+  eq('11/23(월)의 주 → 11/23', R.weekStartOf('2026-11-23'), '2026-11-23');
+  eq('11/30 + 1일 → 12/01', R.addDays('2026-11-30', 1), '2026-12-01');
+  eq('2월 말일(2026)', R.monthEndOf('2026-02-10'), '2026-02-28');
+  eq('2월 말일(2028 윤년)', R.monthEndOf('2028-02-10'), '2028-02-29');
+  eq('12/31 + 1일 → 2027-01-01', R.addDays('2026-12-31', 1), '2027-01-01');
+  eq('2027-01-01(금)의 주 → 2026-12-28', R.weekStartOf('2027-01-01'), '2026-12-28');
+  eq('달 이동: 2026-12 + 1 → 2027-01', R.addMonths('2026-12', 1), '2027-01');
+  const D = days({ '2026-12-28': 20, '2026-12-31': 20, '2027-01-02': 20 });
+  eq('연말을 걸친 주의 음주일 3', R.weekEval(D, [goal('2026-11-02', 2)], '2026-12-28', S, '2027-01-10').drinkDays, 3);
+  eq('잘못된 날짜 거르기(2026-02-30)', R.isDateStr('2026-02-30'), false);
+});
+
+run('날짜 귀속', () => {
+  group('06시 이전 날짜 귀속 · 정오 전후 기본 날짜');
+  eq('11/20 05:59 → 오늘은 11/19', R.logicalToday(at(2026, 11, 20, 5, 59)), '2026-11-19');
+  eq('11/20 06:00 → 오늘은 11/20', R.logicalToday(at(2026, 11, 20, 6, 0)), '2026-11-20');
+  const none = {};
+  const yEntered = days({ '2026-11-19': 0 });
+  eq('09:00, 어제 미입력 → 어제', R.defaultEntryDate(at(2026, 11, 20, 9), none, S), '2026-11-19');
+  eq('09:00, 어제 입력함 → 오늘', R.defaultEntryDate(at(2026, 11, 20, 9), yEntered, S), '2026-11-20');
+  eq('11:59, 어제 미입력 → 어제', R.defaultEntryDate(at(2026, 11, 20, 11, 59), none, S), '2026-11-19');
+  eq('12:00, 어제 미입력 → 오늘', R.defaultEntryDate(at(2026, 11, 20, 12, 0), none, S), '2026-11-20');
+  eq('03:00(06시 이전) → 술자리 시작한 날 11/19', R.defaultEntryDate(at(2026, 11, 20, 3), none, S), '2026-11-19');
+});
+
+run('목표 이력', () => {
+  group('목표 이력에서 주별 목표 고르기');
+  const G = [goal('2026-11-02', 3), goal('2026-11-16', 2), goal('2026-12-07', 1)];
+  eq('첫 목표 전 주(10/26) → 없음', R.goalForWeek(G, '2026-10-26'), null);
+  eq('11/09 주 → 주 3회(변경 전)', R.goalForWeek(G, '2026-11-09').weeklyDrinkDaysMax, 3);
+  eq('11/16 주 → 주 2회(변경한 주)', R.goalForWeek(G, '2026-11-16').weeklyDrinkDaysMax, 2);
+  eq('11/30 주 → 주 2회(변경 후)', R.goalForWeek(G, '2026-11-30').weeklyDrinkDaysMax, 2);
+  eq('12/07 주 → 주 1회(미래 단계)', R.goalForWeek(G, '2026-12-07').weeklyDrinkDaysMax, 1);
+  eq('12/21 주 → 주 1회', R.goalForWeek(G, '2026-12-21').weeklyDrinkDaysMax, 1);
+  const G2 = [...G, { ...goal('2026-11-16', 4), id: 'later', createdAt: '2026-11-17T00:00:00Z' }];
+  eq('같은 시작일이면 나중에 만든 줄', R.goalForWeek(G2, '2026-11-16').id, 'later');
+  eq('미래 단계 목록(오늘 11/20)', R.futureGoals(G, '2026-11-20').map((g) => g.effectiveFrom), ['2026-12-07']);
+  eq('적용 구간', R.goalPeriods(G2).map((p) => [p.from, p.to, p.goal.weeklyDrinkDaysMax]), [['2026-11-02', '2026-11-15', 3], ['2026-11-16', '2026-12-06', 4], ['2026-12-07', null, 1]]);
+  // 목표를 바꿔도 지난 주 판정은 그대로
+  const D = days({ ...fill('2026-11-09', '2026-11-15', 0), '2026-11-10': 20, '2026-11-12': 20, '2026-11-14': 20 });
+  const before = R.weekEval(D, [goal('2026-11-02', 3)], '2026-11-09', S, '2026-11-20').status;
+  const after = R.weekEval(D, [goal('2026-11-02', 3), goal('2026-11-16', 1)], '2026-11-09', S, '2026-11-20').status;
+  eq('목표 변경 전후 지난 주 판정 같음(achieved)', [before, after], ['achieved', 'achieved']);
+});
+
+run('주간 판정', () => {
+  group('주간 달성 판정 4항목과 보류');
+  const base = { ...fill('2026-11-09', '2026-11-15', 0), '2026-11-10': 20, '2026-11-12': 26, '2026-11-13': 13 };
+  const D = days(base);
+  const ev = R.weekEval(D, [goal('2026-11-02', 3)], '2026-11-09', S, '2026-11-20');
+  eq('음주일 3/3 · 과음 0 → 항목', ev.items, { days: 'ok', heavy: 'ok', total: 'na', dry: 'na' });
+  eq('→ 달성', ev.status, 'achieved');
+  eq('합계', [ev.drinkDays, ev.totalG, ev.heavy, ev.sober, ev.missing], [3, 59, 0, 4, 0]);
+  eq('음주일 상한 2 → days over, 미달성', (() => { const e = R.weekEval(D, [goal('2026-11-02', 2)], '2026-11-09', S, '2026-11-20'); return [e.items.days, e.status]; })(), ['over', 'missed']);
+  eq('총량 상한 50g → total over', R.weekEval(D, [goal('2026-11-02', 3, { weeklyTotalG: 50 })], '2026-11-09', S, '2026-11-20').items.total, 'over');
+  eq('총량 상한 60g → total ok', R.weekEval(D, [goal('2026-11-02', 3, { weeklyTotalG: 60 })], '2026-11-09', S, '2026-11-20').items.total, 'ok');
+  const heavyD = days({ ...base, '2026-11-13': 45.5 });
+  eq('과음 1회(허용 0) → heavy over', R.weekEval(heavyD, [goal('2026-11-02', 3)], '2026-11-09', S, '2026-11-20').items.heavy, 'over');
+  eq('과음 1회(허용 1) → heavy ok', R.weekEval(heavyD, [goal('2026-11-02', 3, { heavyMaxPerWeek: 1 })], '2026-11-09', S, '2026-11-20').items.heavy, 'ok');
+  const pend = days(fill('2026-11-09', '2026-11-12', 0));
+  eq('미입력 3일, 넘은 것 없음 → 판정 보류', R.weekEval(pend, [goal('2026-11-02', 2)], '2026-11-09', S, '2026-11-20').status, 'pending');
+  const pend2 = days(fill('2026-11-09', '2026-11-13', 0));
+  eq('미입력 2일 → 달성', R.weekEval(pend2, [goal('2026-11-02', 2)], '2026-11-09', S, '2026-11-20').status, 'achieved');
+  const pend3 = days({ '2026-11-09': 50, ...fill('2026-11-10', '2026-11-12', 0) });
+  eq('미입력 3일이어도 이미 넘었으면 미달성', R.weekEval(pend3, [goal('2026-11-02', 2)], '2026-11-09', S, '2026-11-20').status, 'missed');
+  const prog = days({ '2026-11-16': 20, '2026-11-17': 0 });
+  const pe = R.weekEval(prog, [goal('2026-11-02', 2)], '2026-11-16', S, '2026-11-18');
+  eq('진행 중인 주(수요일): 지난 날 3·미입력 1·완료 아님', [pe.pastDays, pe.missing, pe.complete, pe.status], [3, 1, false, 'achieved']);
+  eq('남은 여유(상한 2, 음주 1)', R.weekRemaining(pe), { days: 1, totalG: null });
+  const preStart = R.weekEval(days({ '2026-11-04': 0, '2026-11-05': 0, '2026-11-06': 0, '2026-11-07': 0, '2026-11-08': 0 }), [goal('2026-11-02', 2)], '2026-11-02', { ...S, startDate: '2026-11-04' }, '2026-11-20');
+  eq('시작일 전 날짜는 미입력으로 세지 않음', [preStart.missing, preStart.status], [0, 'achieved']);
+  eq('목표 없는 주 → nogoal', R.weekEval({}, [goal('2026-11-16', 2)], '2026-11-09', S, '2026-11-20').status, 'nogoal');
+});
+
+run('금주 요일', () => {
+  group('금주 요일 위반');
+  const D = days({ ...fill('2026-11-09', '2026-11-15', 0), '2026-11-10': 20 }); // 화요일
+  const ev = R.weekEval(D, [goal('2026-11-02', 3, { dryWeekdays: [1, 2] })], '2026-11-09', S, '2026-11-20');
+  eq('화요일(1) 금주 요일에 마심 → 위반 1, dry over', [ev.dryViolations, ev.items.dry, ev.status], [['2026-11-10'], 'over', 'missed']);
+  const ev2 = R.weekEval(D, [goal('2026-11-02', 3, { dryWeekdays: [4] })], '2026-11-09', S, '2026-11-20');
+  eq('금요일만 금주 요일 → dry ok', ev2.items.dry, 'ok');
+});
+
+run('연속', () => {
+  group('안 마신 날 연속 · 달성 연속 주');
+  const D = days({ '2026-11-16': 20, '2026-11-17': 0, '2026-11-18': 0, '2026-11-19': 0 });
+  eq('오늘(11/20) 미입력 → 어제부터 3일', R.soberStreak(D, S, '2026-11-20'), 3);
+  eq('오늘도 안 마심 → 4일', R.soberStreak(days({ '2026-11-16': 20, '2026-11-17': 0, '2026-11-18': 0, '2026-11-19': 0, '2026-11-20': 0 }), S, '2026-11-20'), 4);
+  eq('오늘 마심 → 0', R.soberStreak(days({ '2026-11-19': 0, '2026-11-20': 20 }), S, '2026-11-20'), 0);
+  eq('미입력에서 멈춤', R.soberStreak(days({ '2026-11-17': 0, '2026-11-19': 0 }), S, '2026-11-20'), 1);
+  eq('최고 기록', R.bestSoberStreak(days({ '2026-11-01': 0, '2026-11-02': 0, '2026-11-03': 0, '2026-11-04': 20, '2026-11-05': 0 }), S), 3);
+  const G = [goal('2026-11-02', 2)];
+  const all = days({ ...fill('2026-11-02', '2026-11-24', 0) });
+  eq('3주 달성 + 진행 중 주 → 3주 연속', R.goalStreak(all, G, S, '2026-11-25'), { current: 3, best: 3 });
+  const brk = days({ ...fill('2026-11-02', '2026-11-24', 0), '2026-11-10': 50 });
+  eq('가운데 주 미달성 → 현재 1, 최고 1', R.goalStreak(brk, G, S, '2026-11-25'), { current: 1, best: 1 });
+  const curMiss = days({ ...fill('2026-11-02', '2026-11-24', 0), '2026-11-23': 50 });
+  eq('이번 주 이미 미달성 → 현재 0, 최고 3', R.goalStreak(curMiss, G, S, '2026-11-25'), { current: 0, best: 3 });
+  const sunday = days({ ...fill('2026-11-02', '2026-11-29', 0) });
+  eq('일요일까지 다 적은 이번 주는 셈 → 4주', R.goalStreak(sunday, G, S, '2026-11-29').current, 4);
+});
+
+run('기준선', () => {
+  group('기준선 대비 줄인 양 (미입력 날 제외)');
+  const S2 = { ...S, startDate: '2026-11-16', baseline: { drinkDaysPerWeek: 4.5, gPerOccasion: 45.5, heavyPerWeek: 2 } };
+  eq('기준선 주간 총량 4.5 × 45.5 = 204.75g', R.baselineWeeklyG(S2.baseline), 204.75);
+  const D = days({ '2026-11-16': 0, '2026-11-17': 26, '2026-11-19': 0, '2026-11-20': 13, '2026-11-21': 0, '2026-11-22': 0 });
+  const r = R.savedVsBaseline(D, S2, '2026-11-22');
+  eq('입력 6일 · 기준 175.5g · 실제 39g · 줄인 양 136.5g', [r.entered, r.expectedG, r.actualG, r.savedG], [6, 175.5, 39, 136.5]);
+  eq('줄인 양 표시: 소주 21잔', R.fmtAmount(r.savedG, 'soju'), '소주 21잔');
+  const more = R.savedVsBaseline(days({ '2026-11-16': 91 }), S2, '2026-11-16');
+  eq('기준보다 더 마시면 음수(-61.75g)', more.savedG, -61.75);
+  eq('기준선 없음 → null', R.savedVsBaseline(D, { ...S2, baseline: null }, '2026-11-22'), null);
+});
+
+run('제안', () => {
+  group('제안 카드 조건 2종');
+  const G = [goal('2026-11-02', 3)];
+  const ok3 = days(fill('2026-11-02', '2026-11-22', 0));
+  eq('3주 연속 달성 + 다음 단계 없음 → 낮추기(3→2)', R.goalSuggestion(ok3, G, S, '2026-11-23'), { kind: 'lower', from: 3, to: 2 });
+  eq('다음 단계가 있으면 → 없음', R.goalSuggestion(ok3, [...G, goal('2026-12-07', 2)], S, '2026-11-23'), null);
+  eq('[그대로 두기]한 주 → 없음', R.goalSuggestion(ok3, G, { ...S, dismissedSuggestion: '2026-11-23' }, '2026-11-23'), null);
+  const G2 = [goal('2026-11-02', 2)];
+  const miss = days({ ...fill('2026-11-02', '2026-11-22', 0), '2026-11-09': 20, '2026-11-10': 20, '2026-11-11': 20, '2026-11-12': 20, '2026-11-16': 20, '2026-11-17': 20, '2026-11-18': 20, '2026-11-19': 20, '2026-11-20': 20 });
+  eq('2주 연속 미달성(4·5회) → 다시 잡기: min(내림 4.5=4, 2+1)=3', R.goalSuggestion(miss, G2, S, '2026-11-23'), { kind: 'adjust', from: 2, to: 3, avg: 4.5 });
+  const once = days({ ...fill('2026-11-02', '2026-11-22', 0), '2026-11-16': 20, '2026-11-17': 20, '2026-11-18': 20 });
+  eq('1주만 미달성 → 없음', R.goalSuggestion(once, G2, S, '2026-11-23'), null);
+});
+
+run('주간 계획 카드', () => {
+  group('주간 계획 카드 띄우는 때');
+  eq('월요일, 계획 없음 → 이번 주', R.weekPlanPrompt({}, '2026-11-23', 9), '2026-11-23');
+  eq('화요일, 계획 없음 → 이번 주', R.weekPlanPrompt({}, '2026-11-24', 20), '2026-11-23');
+  eq('수요일 → 없음', R.weekPlanPrompt({}, '2026-11-25', 9), null);
+  eq('월요일, 이미 정함 → 없음', R.weekPlanPrompt({ '2026-11-23': { plannedDays: [] } }, '2026-11-23', 9), null);
+  eq('일요일 19시 → 다음 주', R.weekPlanPrompt({}, '2026-11-22', 19), '2026-11-23');
+  eq('일요일 10시 → 없음', R.weekPlanPrompt({}, '2026-11-22', 10), null);
+});
+
+run('상한 정하기 안내', () => {
+  group('상한 정하기 안내 · 상담 안내 · 백업');
+  const G = [goal('2026-11-16', 2, { weeklyTotalG: 91, dryWeekdays: [4] })];
+  const D = days({ '2026-11-16': 26, '2026-11-18': 26 });
+  const h = R.planHints(D, G, S, '2026-11-20', 45.5);
+  eq('3번째 술자리 · 금주 요일 · 과음 기준 · 남은 양 39g', [h.nth, h.overDays, h.dryDay, h.overHeavy, h.remainingG], [3, true, true, true, 39]);
+  const heavy3 = days({ '2026-11-07': 50, '2026-11-12': 50, '2026-11-20': 50 });
+  eq('최근 14일 과음 3회 → 상담 안내', R.counselNeeded(heavy3, S, '2026-11-20'), true);
+  eq('15일 전 과음은 세지 않음 → 없음', R.counselNeeded(heavy3, S, '2026-11-21'), false);
+  eq('백업: 시작 7일 지나고 백업 없음 → 알림', R.backupDue({ ...S, startDate: '2026-11-13' }, '2026-11-20'), true);
+  eq('백업: 시작 6일 → 없음', R.backupDue({ ...S, startDate: '2026-11-14' }, '2026-11-20'), false);
+});
+
+run('백업 형식', () => {
+  group('백업 · CSV');
+  const good = { app: 'jeolju', schemaVersion: 1, data: { days: [{ ...R.emptyDay('2026-11-20'), status: 'sober' }], goals: [goal('2026-11-16', 2)], weekPlans: [], settings: {}, meta: [] } };
+  eq('올바른 파일 → ok', R.validateBackup(good).ok, true);
+  eq('다른 앱 파일 → 거절', R.validateBackup({ ...good, app: 'themebaekdok' }).ok, false);
+  eq('새 버전 파일 → 거절', R.validateBackup({ ...good, schemaVersion: 9 }).ok, false);
+  eq('날짜가 틀린 기록 → 거절', R.validateBackup({ ...good, data: { ...good.data, days: [{ date: '2026-13-01', status: 'sober', alcoholG: 0 }] } }).ok, false);
+  const csv = R.buildCsv([{ ...R.emptyDay('2026-11-20'), status: 'drank', alcoholG: 26, drinks: [{ type: 'soju', count: 4 }], memo: '회식, "1차"만', plan: { limitG: 26, homeBy: '23:00', altNonAlc: true } }], [goal('2026-11-16', 2)], S);
+  eq('CSV는 BOM으로 시작', csv.charCodeAt(0), 0xFEFF);
+  eq('CSV 머리줄', csv.slice(1).split('\r\n')[0], R.CSV_HEADER);
+  eq('CSV 머리줄: morning_condition 열이 있고 condition 단독 열은 없음(15번째 열)', [R.CSV_HEADER.split(',').includes('morning_condition'), R.CSV_HEADER.split(',').includes('condition'), R.CSV_HEADER.split(',').indexOf('morning_condition')], [true, false, 14]);
+  eq('CSV 한 줄', csv.slice(1).split('\r\n')[1], '2026-11-20,drank,planned,26,4,soju,0,soju:4,26,23:00,,1,,,,,,2,"회식, ""1차""만"');
+});
+
+run('v1.2 단위', () => {
+  group('v1.2 소주 병 단위 · 새 주종 칩');
+  eq('47g → 1병', R.toDisplay(47, 'soju_bottle'), 1);
+  eq('70.5g → 1.5병', R.toDisplay(70.5, 'soju_bottle'), 1.5);
+  eq('65g(소주 10잔) → 1.5병(1.38, 0.5병 반올림)', R.toDisplay(65, 'soju_bottle'), 1.5);
+  eq('58.5g(9잔) → 1병(1.24)', R.toDisplay(58.5, 'soju_bottle'), 1);
+  eq('소주 1잔(6.5g) → 0병이 아니라 0.5병', R.toDisplay(6.5, 'soju_bottle'), 0.5);
+  eq('0g → 0병', R.toDisplay(0, 'soju_bottle'), 0);
+  eq('표시: 소주 1.5병 (약 11잔) — 70.5g ÷ 6.5 = 10.8잔', R.fmtAmount(70.5, 'soju_bottle'), '소주 1.5병 (약 11잔)');
+  eq('표시: 소주 2병 (약 14.5잔)', R.fmtAmount(94, 'soju_bottle'), '소주 2병 (약 14.5잔)');
+  eq('짧게: 1.5병', R.fmtCount(70.5, 'soju_bottle'), '1.5병');
+  eq('1.5병 → 70.5g', R.fromDisplay(1.5, 'soju_bottle'), 70.5);
+  eq('−/+ 한 칸: 병 0.5 · 잔 1', [R.unitStep('soju_bottle'), R.unitStep('soju')], [0.5, 1]);
+  eq('[잔|병] 전환의 잔 쪽: 병→소주잔, 표준잔→표준잔', [R.cupUnitOf('soju_bottle'), R.cupUnitOf('std'), R.cupUnitOf('soju')], ['soju', 'std', 'soju']);
+  eq('다른 단위는 잔 수를 덧붙이지 않음', R.fmtAmount(26, 'soju'), '소주 4잔');
+  eq('주종 칩 9개', R.DRINKS.length, 9);
+  eq('새 칩 합계: 반 병 23.5 + 1병 47 + 맥주 1병 20 = 90.5g', R.drinksG([{ type: 'soju_half', count: 1 }, { type: 'soju_bottle', count: 1 }, { type: 'beer_bottle', count: 1 }]), 90.5);
+  eq('맥주 500cc와 맥주 1병은 g 같고 내역은 따로', [R.DRINK_BY_KEY.beer_500.g, R.DRINK_BY_KEY.beer_bottle.g, R.drinksText([{ type: 'beer_500', count: 1 }, { type: 'beer_bottle', count: 2 }], 'soju')], [20, 20, '맥주 500cc 1 · 맥주 병 2']);
+  eq('과음 기준 45.5g을 병 단위로: 1병(약 7잔)', R.fmtAmount(45.5, 'soju_bottle'), '소주 1병 (약 7잔)');
+});
+
+run('v1.2 컨디션', () => {
+  group('v1.2 컨디션 뜻 바꾸기(v1 → v2 옮기기)');
+  const v1 = [
+    { ...R.emptyDay('2026-11-02'), status: 'sober', condition: 3 },
+    { ...R.emptyDay('2026-11-03'), status: 'sober', condition: 2 },
+    { ...R.emptyDay('2026-11-04'), status: 'drank', alcoholG: 20, condition: 2 },
+    { ...R.emptyDay('2026-11-05'), status: 'drank', alcoholG: 50, condition: 1, weightKg: 70 },
+  ];
+  const v2 = R.migrateDaysV1toV2(v1);
+  eq('D의 컨디션 → D+1로 (D+1 없으면 none으로 만듦)', v2.map((d) => [d.date, d.status, d.condition]), [['2026-11-02', 'sober', null], ['2026-11-03', 'sober', 3], ['2026-11-04', 'drank', 2], ['2026-11-05', 'drank', 2], ['2026-11-06', 'none', 1]]);
+  eq('다른 값(체중·양)은 그대로', [v2[3].weightKg, v2[3].alcoholG], [70, 50]);
+  eq('원래 배열은 바꾸지 않음', v1[0].condition, 3);
+  // v1 뜻으로 계산했던 결과(안 마심 2.5 · 마심 2 · 과음 1)와 같아야 한다
+  const map = Object.fromEntries(v2.map((d) => [d.date, d]));
+  const c = ST.conditionAfter(map, S, '2026-11-02', '2026-11-08');
+  eq('옮긴 뒤 통계 숫자 같음', [c.sober.avg, c.drank.avg, c.heavy.avg, c.sober.n, c.drank.n, c.heavy.n], [2.5, 2, 1, 2, 1, 1]);
+  eq('오늘 아침 컨디션은 어제 음주와 짝(기간 끝=오늘)', ST.conditionAfter(days({ '2026-11-19': 20, '2026-11-20': { status: 'none', condition: 1 } }), S, '2026-11-14', '2026-11-20').drank, { n: 1, avg: 1 });
+  const good = { app: 'jeolju', exportedAt: '', data: { days: [], goals: [], weekPlans: [], settings: {}, meta: [] } };
+  eq('백업: v1 · v2 받음, v3 거절', [R.validateBackup({ ...good, schemaVersion: 1 }).ok, R.validateBackup({ ...good, schemaVersion: 2 }).ok, R.validateBackup({ ...good, schemaVersion: 3 }).ok], [true, true, false]);
+  eq('현재 schemaVersion 2', R.SCHEMA_VERSION, 2);
+});
+
+run('v1.2 체중', () => {
+  group('v1.2 체중: 직전 값을 기본으로, 건드리지 않으면 저장 안 됨');
+  const D = days({ '2026-11-17': { status: 'sober', weightKg: 72.8 }, '2026-11-18': { status: 'sober', weightKg: 72.4 }, '2026-11-19': 0 });
+  const w = R.weightState(D, '2026-11-20');
+  eq('오늘 미입력 → 최근 값 72.4(11/18), 저장 안 됨', w, { kg: 72.4, saved: false, fromDate: '2026-11-18' });
+  eq('보여주기만 했을 때 오늘 기록은 생기지 않음', D['2026-11-20'], undefined);
+  eq('체중 추이 점은 저장한 날만(2개)', ST.weightTrend(D, S, '2026-11-14', '2026-11-20', '2026-11-20').points.length, 2);
+  eq('그날 저장한 값이 있으면 그것(진하게)', R.weightState(D, '2026-11-18'), { kg: 72.4, saved: true, fromDate: '2026-11-18' });
+  eq('지난 날은 그 전 값 기준(11/18 → 11/17 값)', R.weightState(days({ '2026-11-17': { status: 'sober', weightKg: 72.8 } }), '2026-11-18').fromDate, '2026-11-17');
+  eq('최근 값이 없으면 빈 칸', R.weightState(days({ '2026-11-19': 0 }), '2026-11-20'), { kg: null, saved: false, fromDate: null });
+});
+
+run('v1.2 달력 주 칸', () => {
+  group('v1.2 달력 주 합계 칸: 진행 중인 주');
+  const G = [goal('2026-11-02', 2)];
+  const live = R.weekEval(days({ '2026-11-16': 0, '2026-11-17': 0 }), G, '2026-11-16', S, '2026-11-18');
+  eq('진행 중, 넘지 않음 → … (○ 아님)', [live.status, R.weekMark(live)], ['achieved', '…']);
+  const liveOver = R.weekEval(days({ '2026-11-16': 20, '2026-11-17': 20, '2026-11-18': 20 }), G, '2026-11-16', S, '2026-11-18');
+  eq('진행 중, 이미 넘음 → △', R.weekMark(liveOver), '△');
+  const sunday = R.weekEval(days(fill('2026-11-16', '2026-11-22', 0)), G, '2026-11-16', S, '2026-11-22');
+  eq('일요일(마지막 날)도 아직 진행 중 → …', R.weekMark(sunday), '…');
+  eq('끝난 주: ○ / △ / –', [
+    R.weekMark(R.weekEval(days(fill('2026-11-09', '2026-11-15', 0)), G, '2026-11-09', S, '2026-11-20')),
+    R.weekMark(R.weekEval(days({ ...fill('2026-11-09', '2026-11-15', 0), '2026-11-10': 50 }), G, '2026-11-09', S, '2026-11-20')),
+    R.weekMark(R.weekEval(days(fill('2026-11-09', '2026-11-12', 0)), G, '2026-11-09', S, '2026-11-20')),
+  ], ['○', '△', '–']);
+});
+
+run('v1.2 기간', () => {
+  group('v1.2 프로젝트 기간 · 시작 후 통계');
+  const P = { ...S, startDate: '2026-11-21', targetDate: '2026-12-31' };
+  eq('시작 11/21, 오늘 12/2 → 12일째 · 연말까지 29일', R.projectDays(P, '2026-12-02'), { dayNo: 12, toTarget: 29, started: true });
+  eq('머리말 글', projectLine(P, '2026-12-02'), '시작 11/21 · 12일째 · 연말(12/31)까지 29일');
+  eq('목표일 없음', projectLine({ ...P, targetDate: null }, '2026-12-02'), '시작 11/21 · 12일째');
+  eq('목표일이 연말이 아니면 "목표일"', projectLine({ ...P, targetDate: '2027-01-31' }, '2026-12-02'), '시작 11/21 · 12일째 · 목표일(1/31)까지 60일');
+  eq('시작 전', projectLine(P, '2026-11-20'), '11/21 시작 · 1일 남음');
+  eq('시작일 당일 → 1일째', R.projectDays(P, '2026-11-21').dayNo, 1);
+  eq('기간 칩 "시작 후" = 시작일~오늘', ST.periodRange('since', {}, { ...S, startDate: '2026-11-02' }, '2026-11-20'), { from: '2026-11-02', to: '2026-11-20' });
+  eq('시작일이 아직이면 오늘 하루', ST.periodRange('since', {}, P, '2026-11-20'), { from: '2026-11-20', to: '2026-11-20' });
+  eq('기간 칩: 전체 대신 시작 후', ST.PERIODS.map((p) => p.key), ['week', '4w', 'month', '12w', 'since']);
+  const D = days({ '2026-11-01': 91, '2026-11-17': 13, '2026-11-18': 0 });
+  const base = { drinkDaysPerWeek: 4.5, gPerOccasion: 45.5, heavyPerWeek: 2 };
+  const a = R.savedVsBaseline(D, { ...S, baseline: base, startDate: '2026-11-01' }, '2026-11-18');
+  const b = R.savedVsBaseline(D, { ...S, baseline: base, startDate: '2026-11-16' }, '2026-11-18');
+  eq('시작일을 바꾸면 기준선 대비 다시 계산(그 전 기록은 남음)', [a.entered, b.entered, D['2026-11-01'].alcoholG], [3, 2, 91]);
+  eq('4주 점검도 새 시작일 기준', ST.fourWeekCheck(D, [goal('2026-11-02', 2)], { ...S, startDate: '2026-11-16' }, '2026-11-18').from, '2026-11-16');
+});
+
+run('v1.2 마신 이유', () => {
+  group('v1.2 최근 마신 이유');
+  const D = days({ '2026-11-10': { status: 'drank', alcoholG: 26, memo: '팀 회식' }, '2026-11-12': { status: 'sober', memo: '사이다로 버팀' }, '2026-11-14': { status: 'drank', alcoholG: 13, memo: '' }, '2026-11-15': { status: 'drank', alcoholG: 20, memo: '스트레스' } });
+  eq('메모 있는 음주일만, 최근 것부터', ST.recentReasons(D, '2026-11-01', '2026-11-20').map((x) => [x.date, x.memo]), [['2026-11-15', '스트레스'], ['2026-11-10', '팀 회식']]);
+  const many = days(Object.fromEntries(Array.from({ length: 8 }, (_, i) => [R.addDays('2026-11-01', i), { status: 'drank', alcoholG: 10, memo: 'm' + i }])));
+  eq('최대 5건', ST.recentReasons(many, '2026-11-01', '2026-11-20').length, 5);
+});
+
+run('버전', () => {
+  group('앱 버전');
+  eq('js/version.js 값(v1.2 또는 v1.2.1 형식)', /^v\d+\.\d+(\.\d+)?$/.test(APP_VERSION), true);
+});
+
+// ---------- 통계(stats.js) ----------
+run('통계', () => {
+  group('통계 집계 (stats.js)');
+  eq('기간: 최근 4주(11/20) → 10/26부터', ST.periodRange('4w', {}, S, '2026-11-20'), { from: '2026-10-26', to: '2026-11-20' });
+  eq('기간: 이번 주', ST.periodRange('week', {}, S, '2026-11-20'), { from: '2026-11-16', to: '2026-11-20' });
+  eq('기간: 이번 달', ST.periodRange('month', {}, S, '2026-11-20').from, '2026-11-01');
+  const plan = { limitG: 26, homeBy: '23:00', altNonAlc: false };
+  const P = (g) => ({ status: 'drank', alcoholG: g, plan, homeAt: '22:30', drinks: [{ type: 'soju', count: 4 }] });
+  const D = days({ ...fill('2026-11-02', '2026-11-29', 0), '2026-11-06': P(26), '2026-11-13': P(26), '2026-11-20': P(26), '2026-11-07': 39 });
+  const wp = ST.weekdayPattern(D, S, '2026-11-02', '2026-11-29');
+  eq('요일 패턴: 금요일 4번 중 3번이 가장 많음', [wp.top.wd, wp.top.entered, wp.top.drink], [4, 4, 3]);
+  eq('요일 패턴: 토요일 1번 · 평균 39g', [wp.rows[5].drink, wp.rows[5].avgG], [1, 39]);
+  eq('요일 패턴: 음주일 4회 → 표본 충분', [wp.enough, wp.need], [true, 0]);
+  const few = ST.weekdayPattern(days({ '2026-11-06': 20, '2026-11-07': 20, '2026-11-08': 0 }), S, '2026-11-02', '2026-11-29');
+  eq('최소 표본: 음주일 2회 → 차트 대신 "1번 더"', [few.enough, few.need], [false, 1]);
+  const pc = ST.planCompare(D, S, '2026-11-02', '2026-11-29');
+  eq('계획 유무 비교: 계획 3번 평균 26g / 없이 1번 39g', [pc.withPlan, pc.withoutPlan], [{ n: 3, avgG: 26 }, { n: 1, avgG: 39 }]);
+  eq('상한 달성 3/3 · 귀가 평균 초과 0분 · 표본 충분', [pc.kept, pc.planDays, pc.avgLateMin, pc.enough], [3, 3, 0, true]);
+  const pcFew = ST.planCompare(days({ '2026-11-06': P(26), '2026-11-13': P(30) }), S, '2026-11-02', '2026-11-29');
+  eq('최소 표본: 음주일 2번 → 비교 안 함(1번 더)', [pcFew.enough, pcFew.need], [false, 1]);
+  const pcOne = ST.planCompare(days({ '2026-11-06': P(26), '2026-11-13': P(30), '2026-11-14': P(20) }), S, '2026-11-02', '2026-11-29');
+  eq('계획 없는 음주일이 없으면 비교 안 함', pcOne.enough, false);
+  const sm = ST.summary(D, S, '2026-11-02', '2026-11-29');
+  eq('요약: 입력 28 · 음주일 4 · 안 마심 24 · 총량 117g · 주 평균 1회', [sm.entered, sm.drinkDays, sm.sober, sm.totalG, sm.perWeek], [28, 4, 24, 117, 1]);
+  eq('요약: 음주일당 평균 29.25g · 상한 달성 3/3', [sm.avgPerDrinkG, sm.planKept, sm.planDays], [29.25, 3, 3]);
+  const half = ST.summary(days({ '2026-11-02': 20, '2026-11-03': 0 }), S, '2026-11-02', '2026-11-08');
+  eq('입력된 날만으로: 2일 중 1일 마심 → 주 평균 3.5회, 입력 2/7', [half.perWeek, half.entered, half.days], [3.5, 2, 7]);
+  const dt = ST.drinkTypes(days({ '2026-11-02': { status: 'drank', alcoholG: 46, drinks: [{ type: 'soju', count: 4 }, { type: 'beer_500', count: 1 }] }, '2026-11-03': 10 }), '2026-11-02', '2026-11-08');
+  eq('주종 비율: 소주 26g · 500cc 20g · 직접 10g', dt.items.map((i) => [i.type, i.g]), [['soju', 26], ['beer_500', 20], ['manual', 10]]);
+  // v1.2: condition = 그날 아침. 11/3 아침 3 ← 11/2 안 마심, 11/6 아침 1 ← 11/5 과음
+  const cd = ST.conditionAfter(days({ '2026-11-02': 0, '2026-11-03': { status: 'sober', condition: 3 }, '2026-11-04': { status: 'drank', alcoholG: 20, condition: 2 }, '2026-11-05': { status: 'drank', alcoholG: 50, condition: 2 }, '2026-11-06': { status: 'none', condition: 1 } }), S, '2026-11-02', '2026-11-08');
+  eq('다음 날 컨디션(D 아침 ↔ D−1 음주): 안 마심 2.5 · 마심 2 · 과음 1', [cd.sober.avg, cd.drank.avg, cd.heavy.avg], [2.5, 2, 1]);
+  const W = days({ '2026-11-02': { status: 'sober', weightKg: 78 }, '2026-11-09': { status: 'sober', weightKg: 77.8 }, '2026-11-16': { status: 'sober', weightKg: 77.5 }, '2026-11-23': { status: 'sober', weightKg: 77.6 }, '2026-11-24': 20, '2026-11-30': 20, '2026-12-01': 20 });
+  const wt = ST.weightTrend(W, S, '2026-11-02', '2026-12-06', '2026-12-06');
+  eq('체중: 주별 (변화, 다음 주 음주일) 3줄', wt.rows.map((r) => [r.weekStart, r.changeKg, r.nextDrinkDays]), [['2026-11-09', -0.2, 0], ['2026-11-16', -0.3, 1], ['2026-11-23', 0.1, 2]]);
+  eq('체중 표: 3주 이상이면 보임', wt.tableEnough, true);
+  eq('체중 표: 다음 주가 아직 시작 전이면 그 줄 빼고 2줄 → 안 보임', ST.weightTrend(W, S, '2026-11-02', '2026-11-25', '2026-11-25').tableEnough, false);
+  const fc = ST.fourWeekCheck(D, [goal('2026-11-02', 2)], S, '2026-11-20');
+  eq('4주 점검: 11/2~11/29, 19일째, 주별 음주일, 끝난 주 2주 모두 달성', [fc.end, fc.dayNo, fc.done, fc.weekDrinkDays, fc.achievedWeeks, fc.completeWeeks], ['2026-11-29', 19, false, [2, 1, 1], 2, 2]);
+  // 명세 예시 그대로의 주간 요약
+  const S3 = { ...S, startDate: '2026-11-09' };
+  const T = (g) => ({ status: 'drank', alcoholG: g, plan: { limitG: 32.5, homeBy: null, altNonAlc: false }, drinks: [{ type: 'manual', g }] });
+  const WK = days({
+    ...fill('2026-11-09', '2026-11-29', 0), '2026-11-09': 20, '2026-11-10': 20, '2026-11-11': 20, '2026-11-12': 20,
+    '2026-11-23': { status: 'sober', weightKg: 78.4 }, '2026-11-26': T(29.25), '2026-11-28': T(29.25), '2026-11-29': { status: 'sober', weightKg: 77.9 },
+  });
+  eq('주간 요약 복사 글', ST.weekSummaryText(WK, [goal('2026-11-09', 3)], S3, '2026-11-23', '2026-11-29'),
+    '[절주노트 주간 요약] 11/23~11/29 · 목표 주 3회 이하\n음주일 2/3 · 과음 0 · 총량 소주 9잔 · 상한 달성 2/2\n안 마신 날 5 · 입력 7/7일 · 목표 달성 2주 연속\n체중 78.4 → 77.9kg');
+});
+
+async function finish() {
+  try {
+    const sw = await (await fetch('sw.js', { cache: 'no-store' })).text();
+    const m = sw.match(/VERSION = '([^']+)'/);
+    eq('sw.js VERSION = version.js APP_VERSION', m && m[1], APP_VERSION);
+  } catch (e) { eq('sw.js 읽기', String(e), '읽기 성공'); }
+  const sum = document.getElementById('summary');
+  sum.textContent = fail ? `실패 ${fail}건 / 통과 ${pass}건` : `전부 통과 (${pass}건)`;
+  sum.className = fail ? 'fail' : 'pass';
+  document.title = sum.textContent;
+}
+await finish();
+
+// ---------- 예시 6주 데이터 ----------
+async function seed() {
+  const msg = document.getElementById('seed-msg');
+  msg.textContent = '넣는 중…';
+  const repo = await import('./js/repo.js');
+  const res = await repo.writeSampleDb(makeSample(R.logicalToday(new Date())));
+  msg.textContent = res.ok ? '넣었어요. 아래 링크로 확인하세요.' : `실패: ${res.error}`;
+  return res.ok;
+}
+document.getElementById('seed').addEventListener('click', seed);
+if (location.hash === '#seed') { await seed(); document.title += ' · seeded'; }
+</script>
+</body>
+</html>
