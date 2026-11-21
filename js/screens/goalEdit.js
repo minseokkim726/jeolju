@@ -131,7 +131,7 @@ export function render(root, d, ctx) {
     try {
       if (mode === 'welcome') { await repo.replaceGoals([goal]); ctx.go('welcome/3'); return; }
       if (editing) await repo.updateFutureGoal(editing.id, goal, d.today, wso);
-      else await repo.addGoal(goal);
+      else await repo.addGoal(goal, wso);
       toast(`${fmtMDWp(effectiveFrom)}부터 주 ${st.max}회 이하`);
       ctx.go('goals');
     } catch (e) { q('[data-el="err"]').textContent = e.message || String(e); }

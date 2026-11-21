@@ -267,26 +267,43 @@ export const RESULT_LABEL = { none: '미입력', sober: '안 마심', heavy: '�
 export const RESULT_SYMBOL = { none: '', sober: '○', heavy: '■', over: '▲', planned: '✓', drank: '●' };
 
 // ---------- 목표 이력 ----------
-export function sortGoals(goals) {
-  return [...(goals || [])].sort((a, b) => (a.effectiveFrom < b.effectiveFrom ? -1 : a.effectiveFrom > b.effectiveFrom ? 1
-    : String(a.createdAt || '') < String(b.createdAt || '') ? -1 : String(a.createdAt || '') > String(b.createdAt || '') ? 1 : 0));
+// v1.4.1 목표 순서는 "주"로 비교한다: ① 적용 주(effectiveFrom이 든 주의 시작일) ② 같은 주면 나중에 만든 것(createdAt, 없으면 배열 뒤쪽).
+// (v1.4에서는 날짜 문자열로 비교해, 같은 주 안에서 날짜가 늦은 옛 목표(월요일)가 새 목표(일요일)를 이기던 버그가 있었다)
+export const goalWeek = (g, wso = 1) => weekStartOf(g.effectiveFrom, wso);
+// ws가 주 시작일이면 요일로 한 주 시작을 안다(일요일 → 0, 그 밖 → 1)
+const wsoOfWs = (ws) => (parse(ws).getUTCDay() === 0 ? 0 : 1);
+export function sortGoals(goals, wso = 1) {
+  return (goals || []).map((g, i) => ({ g, i, w: goalWeek(g, wso), c: String(g.createdAt || '') }))
+    .sort((a, b) => (a.w < b.w ? -1 : a.w > b.w ? 1 : a.c < b.c ? -1 : a.c > b.c ? 1 : a.i - b.i))
+    .map((x) => x.g);
 }
-// 어떤 주(ws 시작)의 목표 = 그 주 시작일 이전 또는 그 주 안에 effectiveFrom이 있는 줄 중 가장 늦은 것
-// (v1.4: effectiveFrom은 "그 날짜가 들어 있는 주부터 적용". 같은 날이면 나중에 만든 것). 없으면 null
-export function goalForWeek(goals, ws) {
-  const end = addDays(ws, 6);
+// 어떤 주(ws 시작)의 목표 = 적용 주가 ws 이하인 줄 중 적용 주가 가장 늦은 것, 같은 주면 나중에 만든 것. 없으면 null
+export function goalForWeek(goals, ws, wso = wsoOfWs(ws)) {
   let g = null;
-  for (const x of sortGoals(goals)) if (x.effectiveFrom <= end) g = x;
+  for (const x of sortGoals(goals, wso)) if (goalWeek(x, wso) <= ws) g = x;
   return g;
+}
+// 같은 주에 목표가 여러 줄이면 이기는 줄(나중에 만든 것)만 남긴다. 진 줄은 어느 주에도 적용된 적이 없으므로 지난 판정은 그대로.
+// { keep: [...], removeIds: [...] }
+export function dedupeGoals(goals, wso = 1) {
+  const sorted = sortGoals(goals, wso);
+  const keep = sorted.filter((g, i) => !(sorted[i + 1] && goalWeek(sorted[i + 1], wso) === goalWeek(g, wso)));
+  const ids = new Set(keep.map((g) => g.id));
+  return { keep, removeIds: sorted.filter((g) => !ids.has(g.id)).map((g) => g.id) };
+}
+// 새 줄을 저장할 때 대신할(지울) 같은 주의 기존 줄 id. exceptId: 지금 고치는 줄
+export function sameWeekGoalIds(goals, effectiveFrom, wso = 1, exceptId = null) {
+  const w = weekStartOf(effectiveFrom, wso);
+  return (goals || []).filter((g) => g.id !== exceptId && goalWeek(g, wso) === w).map((g) => g.id);
 }
 export const currentGoal = (goals, today, wso = 1) => goalForWeek(goals, weekStartOf(today, wso));
 // 아직 시작하지 않은 단계: 이번 주가 끝난 뒤에 effectiveFrom이 있는 줄
-export const futureGoals = (goals, today, wso = 1) => sortGoals(goals).filter((g) => g.effectiveFrom > weekEndOf(today, wso));
-export const goalStarted = (g, today, wso = 1) => !!g && g.effectiveFrom <= weekEndOf(today, wso);
+export const futureGoals = (goals, today, wso = 1) => sortGoals(goals, wso).filter((g) => goalWeek(g, wso) > weekStartOf(today, wso));
+export const goalStarted = (g, today, wso = 1) => !!g && goalWeek(g, wso) <= weekStartOf(today, wso);
 // 실제로 적용된(같은 주의 더 나중 줄에 가려지지 않은) 목표 구간: [{ goal, from(주 시작일), to|null }]
 export function goalPeriods(goals, wso = 1) {
-  const sorted = sortGoals(goals);
-  const wk = (g) => weekStartOf(g.effectiveFrom, wso);
+  const sorted = sortGoals(goals, wso);
+  const wk = (g) => goalWeek(g, wso);
   const eff = sorted.filter((g, i) => !(sorted[i + 1] && wk(sorted[i + 1]) === wk(g)));
   return eff.map((g, i) => ({ goal: g, from: wk(g), to: eff[i + 1] ? addDays(wk(eff[i + 1]), -1) : null }));
 }
@@ -411,7 +428,7 @@ export function goalSuggestion(daysMap, goals, s, today) {
   const cur = goalForWeek(goals, curWs);
   if (!cur || s.dismissedSuggestion === curWs) return null;
   const w = [1, 2, 3].map((i) => weekEval(daysMap, goals, addDays(curWs, -7 * i), s, today));
-  const hasNext = goals.some((g) => g.effectiveFrom > addDays(curWs, 6));
+  const hasNext = goals.some((g) => goalWeek(g, wsoOf(s)) > curWs);
   if (w.every((e) => e.status === 'achieved') && !hasNext && cur.weeklyDrinkDaysMax > 0) {
     return { kind: 'lower', from: cur.weeklyDrinkDaysMax, to: cur.weeklyDrinkDaysMax - 1 };
   }

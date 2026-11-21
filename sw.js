@@ -1,6 +1,6 @@
 // 서비스 워커: 앱 파일을 기기에 담아 두고 네트워크 없이도 열리게 한다.
 // 앱 파일을 고치면 반드시 VERSION을 올린다(js/version.js의 APP_VERSION과 같게).
-const VERSION = 'v1.4';
+const VERSION = 'v1.4.1';
 const CACHE = `jeolju-${VERSION}`;
 const SHELL = [
   './',

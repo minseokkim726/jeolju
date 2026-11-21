@@ -127,7 +127,7 @@ export function render(root, d, ctx) {
   if (sug) {
     q('[data-act="sug-apply"]').addEventListener('click', async () => {
       const { id, createdAt, effectiveFrom, ...rest } = goal;
-      await repo.addGoal({ ...rest, weeklyDrinkDaysMax: sug.to, effectiveFrom: curWs, note: sug.kind === 'lower' ? '제안: 한 단계 낮춤' : '제안: 다시 잡음' });
+      await repo.addGoal({ ...rest, weeklyDrinkDaysMax: sug.to, effectiveFrom: curWs, note: sug.kind === 'lower' ? '제안: 한 단계 낮춤' : '제안: 다시 잡음' }, wso);
       await repo.saveSettings({ dismissedSuggestion: curWs });
       toast(`이번 주부터 주 ${sug.to}회 이하`);
       ctx.refresh();

@@ -92,6 +92,11 @@ export async function init(today) {
   }
   const meta = all.meta.find((m) => m.id === 'meta');
   if (!meta) put.meta = [{ id: 'meta', schemaVersion: R.SCHEMA_VERSION }];
+  // v1.4.1 같은 주(현재 한 주 시작 기준)에 목표가 여러 줄이면 나중에 만든 것만 남긴다(한 번 정리되면 다음부터는 지울 것이 없음)
+  if (all.goals.length) {
+    const { removeIds } = R.dedupeGoals(all.goals, R.wsoOf(s));
+    if (removeIds.length) await write({ del: { goals: removeIds } });
+  }
   await write({ put });
   // v1 → v2: 컨디션을 그날 아침 뜻으로 옮긴다(한 번만, 한 트랜잭션)
   if (meta && (meta.schemaVersion || 1) < 2) {
@@ -108,7 +113,8 @@ export async function load() {
   for (const d of all.days) daysMap[d.date] = d;
   const weekPlans = {};
   for (const w of all.weekPlans) weekPlans[w.weekStart] = w;
-  return { days: daysMap, daysList: all.days, goals: R.sortGoals(all.goals), weekPlans, settings: settingsOf(all.settings), demo: DEMO };
+  const settings = settingsOf(all.settings);
+  return { days: daysMap, daysList: all.days, goals: R.sortGoals(all.goals, R.wsoOf(settings)), weekPlans, settings, demo: DEMO };
 }
 
 async function getDay(date) {
@@ -143,9 +149,11 @@ export const deletePlan = (date) => patchDay(date, { plan: null });
 
 // ---------- 목표 ----------
 // 목표를 바꾸면 덮어쓰지 않고 새 줄을 추가한다
-export async function addGoal(goal) {
+// v1.4.1 같은 주에 이미 있던 줄은 새 줄이 대신한다(지움). 다른 주 줄은 그대로
+export async function addGoal(goal, wso = 1) {
   const row = { ...R.DEFAULT_GOAL, ...goal, id: newId('goal'), createdAt: new Date().toISOString() };
-  await write({ put: { goals: [row] } });
+  const all = await readAll(['goals']);
+  await write({ del: { goals: R.sameWeekGoalIds(all.goals, row.effectiveFrom, wso) }, put: { goals: [row] } });
   return row;
 }
 // 아직 시작하지 않은 단계만 고치거나 지운다
@@ -153,7 +161,8 @@ export async function updateFutureGoal(id, goal, today, wso = 1) {
   const all = await readAll(['goals']);
   const cur = all.goals.find((g) => g.id === id);
   if (!cur || R.goalStarted(cur, today, wso)) throw new Error('이미 시작된 목표는 고칠 수 없어요. 새 목표를 추가해 주세요.');
-  await write({ put: { goals: [{ ...cur, ...goal, id }] } });
+  const row = { ...cur, ...goal, id, createdAt: new Date().toISOString() };
+  await write({ del: { goals: R.sameWeekGoalIds(all.goals, row.effectiveFrom, wso, id) }, put: { goals: [row] } });
 }
 export async function deleteFutureGoal(id, today, wso = 1) {
   const all = await readAll(['goals']);
@@ -174,10 +183,11 @@ export async function saveWeekPlan(weekStart, plannedDays, skipped = false) {
 
 // v1.4 한 주 시작 바꾸기: 설정과 함께 주간 계획을 새 기준으로 다시 묶는다(한 트랜잭션). 기록·목표는 그대로
 export async function setWeekStart(wso) {
-  const all = await readAll(['settings', 'weekPlans']);
+  const all = await readAll(['settings', 'weekPlans', 'goals']);
   const s = settingsOf(all.settings);
   const v = wso === 0 ? 0 : 1;
-  await write({ clear: ['weekPlans'], put: { settings: [{ id: 'settings', ...s, weekStartsOn: v }], weekPlans: R.regroupWeekPlans(all.weekPlans, v) } });
+  // 새 기준에서 같은 주가 된 목표 줄도 정리한다(v1.4.1)
+  await write({ clear: ['weekPlans'], del: { goals: R.dedupeGoals(all.goals, v).removeIds }, put: { settings: [{ id: 'settings', ...s, weekStartsOn: v }], weekPlans: R.regroupWeekPlans(all.weekPlans, v) } });
 }
 
 export async function saveSettings(patch) {
@@ -207,7 +217,7 @@ export async function importData(obj, dbName = DB_NAME) {
     await write({
       clear: STORES,
       put: {
-        days, goals: d.goals, weekPlans: d.weekPlans,
+        days, goals: R.dedupeGoals(d.goals, R.wsoOf(withDefaults(s))).keep, weekPlans: d.weekPlans,
         settings: [{ id: 'settings', ...withDefaults(s) }],
         meta: [{ id: 'meta', schemaVersion: R.SCHEMA_VERSION }],
       },

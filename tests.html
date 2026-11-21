@@ -662,6 +662,52 @@ run('v1.4 하루 시작 시각', () => {
   eq('통계 상한 달성도 설정 반영(4시)', [ST.summary({ '2026-11-20': { ...day, date: '2026-11-20' } }, S, '2026-11-20', '2026-11-20').planKept, ST.summary({ '2026-11-20': { ...day, date: '2026-11-20' } }, S4, '2026-11-20', '2026-11-20').planKept], [0, 1]);
 });
 
+run('v1.4.1 같은 주 목표', () => {
+  group('v1.4.1 목표 고르기는 주 → 나중에 만든 것');
+  const oldG = goal('2026-11-23', 3, { id: 'old', createdAt: '2026-11-21T10:00:00Z' }); // 월요일 기준 때 만든 줄
+  const newG = goal('2026-11-22', 2, { id: 'new', createdAt: '2026-11-22T06:30:00Z' }); // 일요일 기준으로 바꾼 뒤 저장
+  const G = [goal('2026-11-08', 3, { id: 'first', createdAt: '2026-11-08T00:00:00Z' }), oldG, newG];
+  eq('일 기준: 옛 11/23 주 3회 + 새 11/22 주 2회(나중 생성) → 11/22 주 = 주 2회', R.goalForWeek(G, '2026-11-22').id, 'new');
+  eq('일 기준 현재 목표(오늘 11/22)', R.currentGoal(G, '2026-11-22', 0).weeklyDrinkDaysMax, 2);
+  eq('배열 순서가 달라도 같음', R.goalForWeek([newG, oldG, G[0]], '2026-11-22').id, 'new');
+  eq('지난 주(11/15)는 그대로 주 3회(first)', R.goalForWeek(G, '2026-11-15').id, 'first');
+  const a = goal('2026-11-22', 3, { id: 'a', createdAt: '2026-11-22T01:00:00Z' }), b = goal('2026-11-22', 1, { id: 'b', createdAt: '2026-11-22T02:00:00Z' });
+  eq('같은 날짜, createdAt만 다름 → 나중 것', [R.goalForWeek([b, a], '2026-11-22').id, R.goalForWeek([a, b], '2026-11-22').id], ['b', 'b']);
+  const na = { ...a, createdAt: undefined }, nb = { ...b, createdAt: undefined };
+  eq('createdAt 없으면 배열 뒤쪽', [R.goalForWeek([na, nb], '2026-11-22').id, R.goalForWeek([nb, na], '2026-11-22').id], ['b', 'a']);
+  // 월요일 기준: 11/22(일)과 11/23(월)은 다른 주 → 날짜가 아니라 주로 비교
+  const m1 = goal('2026-11-17', 3, { id: 'm-old', createdAt: '2026-11-15T00:00:00Z' }), m2 = goal('2026-11-16', 2, { id: 'm-new', createdAt: '2026-11-20T00:00:00Z' });
+  eq('월 기준: 같은 주(11/16~22) 화 11/17 옛 줄 + 월 11/16 새 줄 → 새 줄', R.goalForWeek([m1, m2], '2026-11-16').id, 'm-new');
+  eq('월 기준에서 옛 11/23 + 새 11/22: 서로 다른 주 → 11/16 주는 새 줄, 11/23 주는 옛 줄', [R.goalForWeek([oldG, newG], '2026-11-16').id, R.goalForWeek([oldG, newG], '2026-11-23').id], ['new', 'old']);
+  eq('목표 순서(일 기준): 같은 주는 만든 순', R.sortGoals(G, 0).map((g) => g.id), ['first', 'old', 'new']);
+  eq('목표 이력(일 기준): 같은 주는 한 줄(새 줄)', R.goalPeriods(G, 0).map((p) => [p.from, p.goal.id]), [['2026-11-08', 'first'], ['2026-11-22', 'new']]);
+  eq('이번 주 줄은 미래 단계가 아님', R.futureGoals(G, '2026-11-22', 0).length, 0);
+  const F = [...G, goal('2026-12-07', 1, { id: 'fut', createdAt: '2026-11-22T07:00:00Z' })];
+  eq('다음 주 이후 단계는 그대로 미래(12/07 → 일 기준 12/06 주)', [R.futureGoals(F, '2026-11-22', 0).map((g) => g.id), R.goalStarted(F[3], '2026-11-22', 0), R.goalForWeek(F, '2026-12-06').id], [['fut'], false, 'fut']);
+  eq('제안 카드: 같은 주 줄은 "다음 단계"로 치지 않음', R.goalSuggestion(days(fill('2026-11-01', '2026-11-21', 0)), [goal('2026-11-01', 3, { createdAt: '2026-11-01T00:00:00Z' }), goal('2026-11-23', 3, { createdAt: '2026-11-02T00:00:00Z' })], S0, '2026-11-22'), { kind: 'lower', from: 3, to: 2 });
+});
+
+run('v1.4.1 저장·정리', () => {
+  group('v1.4.1 저장 시 같은 주 대체 · 첫 실행 정리');
+  const oldG = goal('2026-11-23', 3, { id: 'old', createdAt: '2026-11-21T10:00:00Z' });
+  const G = [goal('2026-11-08', 3, { id: 'first', createdAt: '2026-11-08T00:00:00Z' }), oldG, goal('2026-12-06', 1, { id: 'fut', createdAt: '2026-11-21T11:00:00Z' })];
+  eq('11/22(일) 저장 → 같은 주 옛 줄만 지움(다른 주 그대로)', R.sameWeekGoalIds(G, '2026-11-22', 0), ['old']);
+  eq('월 기준으로 11/22 저장 → 11/16 주에는 지울 줄 없음', R.sameWeekGoalIds(G, '2026-11-22', 1), []);
+  eq('고치는 줄 자신은 지우지 않음', R.sameWeekGoalIds(G, '2026-12-06', 0, 'fut'), []);
+  const newG = goal('2026-11-22', 2, { id: 'new', createdAt: '2026-11-22T06:30:00Z' });
+  const dup = [...G, newG];
+  const dd = R.dedupeGoals(dup, 0);
+  eq('정리(일 기준): 같은 주 중복 → 나중 것만 남음', [dd.keep.map((g) => g.id), dd.removeIds], [['first', 'new', 'fut'], ['old']]);
+  eq('정리(월 기준): 11/22·11/23은 다른 주 → 지울 것 없음', R.dedupeGoals(dup, 1).removeIds, []);
+  eq('정리는 두 번 해도 같음', R.dedupeGoals(dd.keep, 0).removeIds, []);
+  // 지난 주 판정 불변: 정리 전후로 모든 주의 목표·판정이 같다
+  const D = days({ ...fill('2026-11-08', '2026-11-28', 0), '2026-11-10': 20, '2026-11-12': 20, '2026-11-19': 20, '2026-11-23': 20 });
+  const weeks = ['2026-11-08', '2026-11-15', '2026-11-22', '2026-11-29', '2026-12-06'];
+  const sig = (goals) => weeks.map((w) => { const e = R.weekEval(D, goals, w, S0, '2026-11-30'); return [e.goal && e.goal.id, e.status]; });
+  eq('정리 전후 주별 목표·판정 같음', sig(dd.keep), sig(dup));
+  eq('11/22 주 판정은 새 목표(주 2회) 기준', R.weekEval(D, dd.keep, '2026-11-22', S0, '2026-11-30').goal.weeklyDrinkDaysMax, 2);
+});
+
 async function finish() {
   try {
     const sw = await (await fetch('sw.js', { cache: 'no-store' })).text();
