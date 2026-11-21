@@ -10,7 +10,7 @@ export function render(root, d, ctx) {
   const quick = () => (u === 'soju_bottle' ? [0.5, 1, 1.5, 2] : [2, 3, 4, 5]);
   let date = R.isDateStr(ctx.param) ? ctx.param : d.today;
   const cur = (d.days[date] && d.days[date].plan) || null;
-  const goal = R.goalForWeek(d.goals, R.weekStartOf(date)) || R.DEFAULT_GOAL;
+  const goal = R.goalForWeek(d.goals, R.weekStartOf(date, R.wsoOf(s))) || R.DEFAULT_GOAL;
   const st = {
     limitG: cur ? cur.limitG : goal.defaultLimitG,
     homeBy: cur ? cur.homeBy || '' : '23:00',

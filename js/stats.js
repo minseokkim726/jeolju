@@ -14,7 +14,7 @@ export const PERIODS = [
 export const MIN = { weekday: 3, planCompare: 3, weeks: 2, weightWeeks: 3, baselineRecent: 7, food: 3, foodGroup: 2 };
 
 export function periodRange(key, daysMap, s, today) {
-  const ws = R.weekStartOf(today);
+  const ws = R.weekStartOf(today, R.wsoOf(s));
   if (key === 'week') return { from: ws, to: today };
   if (key === 'month') return { from: R.monthStartOf(today), to: today };
   if (key === '12w') return { from: R.addDays(ws, -77), to: today };
@@ -38,7 +38,7 @@ export function summary(daysMap, s, from, to) {
     if (!R.isEntered(day)) continue;
     o.entered++;
     if (R.isDrinkDay(day)) { o.drinkDays++; o.totalG += day.alcoholG; if (day.alcoholG >= s.heavyG) o.heavy++; } else o.sober++;
-    if (day.plan) { o.planDays++; if (R.planKept(day)) o.planKept++; }
+    if (day.plan) { o.planDays++; if (R.planKept(day, R.cutoffOf(s))) o.planKept++; }
   }
   o.totalG = Math.round(o.totalG * 1000) / 1000;
   o.avgPerDrinkG = o.drinkDays ? o.totalG / o.drinkDays : 0;
@@ -51,7 +51,7 @@ export function summary(daysMap, s, from, to) {
 export function baselineCompare(daysMap, s, today) {
   if (!s.baseline) return null;
   const saved = R.savedVsBaseline(daysMap, s, today);
-  const ws = R.weekStartOf(today);
+  const ws = R.weekStartOf(today, R.wsoOf(s));
   const recent = summary(daysMap, s, R.addDays(ws, -21), today);
   return {
     saved,
@@ -65,14 +65,14 @@ export function baselineCompare(daysMap, s, today) {
 // 3. 주별 추이
 export function weekly(daysMap, goals, s, from, to, today) {
   const out = [];
-  for (let ws = R.weekStartOf(from); ws <= to; ws = R.addDays(ws, 7)) {
+  for (let ws = R.weekStartOf(from, R.wsoOf(s)); ws <= to; ws = R.addDays(ws, 7)) {
     const ev = R.weekEval(daysMap, goals, ws, s, today);
     out.push({ weekStart: ws, drinkDays: ev.drinkDays, totalG: ev.totalG, heavy: ev.heavy, entered: ev.entered, goalMax: ev.goal ? ev.goal.weeklyDrinkDaysMax : null, goalTotalG: ev.goal ? ev.goal.weeklyTotalG : null, status: ev.status, complete: ev.complete });
   }
   return out;
 }
 
-// 4. 요일 패턴(월~일). top: 가장 많이 마신 요일(같으면 평균 양이 많은 쪽)
+// 4. 요일 패턴. rows[wd]는 요일 번호(0=월 … 6=일), order는 한 주 시작에 맞춘 막대 순서. top: 가장 많이 마신 요일(같으면 평균 양이 많은 쪽, 그다음 주 앞쪽)
 export function weekdayPattern(daysMap, s, from, to) {
   const rows = Array.from({ length: 7 }, (_, i) => ({ wd: i, entered: 0, drink: 0, totalG: 0, avgG: 0 }));
   for (const d of R.dateRange(from, to)) {
@@ -84,9 +84,10 @@ export function weekdayPattern(daysMap, s, from, to) {
   }
   for (const r of rows) r.avgG = r.drink ? r.totalG / r.drink : 0;
   const drink = rows.reduce((a, r) => a + r.drink, 0);
+  const order = R.weekdayOrder(R.wsoOf(s));
   let top = null;
-  for (const r of rows) if (r.drink > 0 && (!top || r.drink > top.drink || (r.drink === top.drink && r.avgG > top.avgG))) top = r;
-  return { rows, drink, enough: drink >= MIN.weekday, need: Math.max(0, MIN.weekday - drink), top };
+  for (const r of order.map((i) => rows[i])) if (r.drink > 0 && (!top || r.drink > top.drink || (r.drink === top.drink && r.avgG > top.avgG))) top = r;
+  return { rows, order, drink, enough: drink >= MIN.weekday, need: Math.max(0, MIN.weekday - drink), top };
 }
 
 // 5. 상황별
@@ -184,8 +185,8 @@ export function planCompare(daysMap, s, from, to) {
     if (!R.isEntered(day)) continue;
     if (day.plan) {
       planDays++;
-      if (R.planKept(day)) kept++;
-      if (R.isDrinkDay(day) && day.plan.homeBy && day.homeAt) { lateSum += R.homeLateMin(day.homeAt, day.plan.homeBy); lateN++; }
+      if (R.planKept(day, R.cutoffOf(s))) kept++;
+      if (R.isDrinkDay(day) && day.plan.homeBy && day.homeAt) { lateSum += R.homeLateMin(day.homeAt, day.plan.homeBy, R.cutoffOf(s)); lateN++; }
     }
     if (!R.isDrinkDay(day)) continue;
     const t = day.plan ? w : wo;
@@ -229,7 +230,7 @@ export function weightTrend(daysMap, s, from, to, today) {
   }
   // 주마다 마지막 체중
   const lastOfWeek = {};
-  for (const p of points) lastOfWeek[R.weekStartOf(p.date)] = p.kg;
+  for (const p of points) lastOfWeek[R.weekStartOf(p.date, R.wsoOf(s))] = p.kg;
   const weeks = Object.keys(lastOfWeek).sort();
   const rows = [];
   for (let i = 1; i < weeks.length; i++) {
@@ -251,7 +252,8 @@ export function fourWeekCheck(daysMap, goals, s, today) {
   if (to < from) return null;
   const sm = summary(daysMap, s, from, to);
   const weeks = [];
-  for (let ws = R.weekStartOf(from); ws <= to; ws = R.addDays(ws, 7)) weeks.push(R.weekEval(daysMap, goals, ws, s, today));
+  // 28일 기간은 시작일 기준. 그 안의 주별 음주일·달성 주는 한 주 시작 설정을 따른다
+  for (let ws = R.weekStartOf(from, R.wsoOf(s)); ws <= to; ws = R.addDays(ws, 7)) weeks.push(R.weekEval(daysMap, goals, ws, s, today));
   const pts = weightTrend(daysMap, s, from, to, today).points;
   return {
     from, end, to, done: today > end, dayNo: R.daysBetween(from, to) + 1,

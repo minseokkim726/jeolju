@@ -71,8 +71,8 @@ export function render(root, d, ctx) {
   const wp = ST.weekdayPattern(d.days, s, from, to);
   parts.push(card('요일 패턴', wp.enough ? `
     ${wp.top ? `<div class="st-big">${WD_FULL[wp.top.wd]}에 가장 많이 마셨어요(${wp.top.entered}번 중 ${wp.top.drink}번)</div>` : ''}
-    ${barChart(wp.rows.map((r) => ({ label: WD[r.wd], value: r.drink, note: `${WD_FULL[r.wd]}: ${r.entered}번 중 ${r.drink}번 마심${r.drink ? ` · 평균 ${R.fmtAmount(r.avgG, u)}` : ''}` })), { unit: '번' })}
-    <div class="wd-avg"><span class="tiny">평균 양</span>${wp.rows.map((r) => `<span>${r.drink ? esc(R.fmtNum(R.toDisplay(r.avgG, u))) : '–'}</span>`).join('')}</div>` : need(wp.need, 'drink')));
+    ${barChart(wp.order.map((i) => wp.rows[i]).map((r) => ({ label: WD[r.wd], value: r.drink, note: `${WD_FULL[r.wd]}: ${r.entered}번 중 ${r.drink}번 마심${r.drink ? ` · 평균 ${R.fmtAmount(r.avgG, u)}` : ''}` })), { unit: '번' })}
+    <div class="wd-avg"><span class="tiny">평균 양</span>${wp.order.map((i) => wp.rows[i]).map((r) => `<span>${r.drink ? esc(R.fmtNum(R.toDisplay(r.avgG, u))) : '–'}</span>`).join('')}</div>` : need(wp.need, 'drink')));
 
   // 5. 상황별
   const oc = ST.byOccasion(d.days, s, from, to);
@@ -169,7 +169,7 @@ export function render(root, d, ctx) {
   }
 
   // 11. 주간 요약 복사(이번 주)
-  const weekText = view.period === 'week' ? ST.weekSummaryText(d.days, d.goals, s, R.weekStartOf(d.today), d.today) : '';
+  const weekText = view.period === 'week' ? ST.weekSummaryText(d.days, d.goals, s, R.weekStartOf(d.today, R.wsoOf(s)), d.today) : '';
   if (weekText) parts.push(card('주간 요약', `<pre class="summary">${esc(weekText)}</pre><button type="button" class="btn" data-copy="week">주간 요약 복사</button>`));
 
   const counsel = R.counselNeeded(d.days, s, d.today);

@@ -45,18 +45,18 @@ export const KCAL_PER_G = 7;
 export const DEFAULT_SETTINGS = {
   unit: 'soju',
   heavyG: 45.5,
-  weekStartsOn: 1,
+  weekStartsOn: 0, // v1.4: 0=일요일(새로 설치 기본), 1=월요일. 이미 쓰던 기기에 값이 없으면 월요일로 읽는다(repo.js)
   showWeight: true,
   showCondition: true,
   showOccasion: true,
-  dayCutoffHour: 6,
+  dayCutoffHour: 6, // v1.4: 설정에서 0~10시
   baseline: null, // { drinkDaysPerWeek, gPerOccasion, heavyPerWeek }
   longTermNote: '',
   startDate: null,
   targetDate: null, // 목표일(선택). 예 2026-12-31
   lastBackupAt: null,
   onboarded: false,
-  dismissedSuggestion: null, // 제안 카드를 [그대로 두기]한 주(월요일)
+  dismissedSuggestion: null, // 제안 카드를 [그대로 두기]한 주(주 시작일)
 };
 
 export const DEFAULT_GOAL = {
@@ -105,8 +105,15 @@ const parse = (s) => { const [y, m, d] = s.split('-').map(Number); return new Da
 export const isDateStr = (s) => typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s) && toStr(parse(s)) === s;
 export const addDays = (s, n) => { const d = parse(s); d.setUTCDate(d.getUTCDate() + n); return toStr(d); };
 export const daysBetween = (a, b) => Math.round((parse(b) - parse(a)) / 86400000);
-export const weekdayIdx = (s) => (parse(s).getUTCDay() + 6) % 7; // 0=월 … 6=일
-export const weekStartOf = (s) => addDays(s, -weekdayIdx(s)); // 월요일
+export const weekdayIdx = (s) => (parse(s).getUTCDay() + 6) % 7; // 0=월 … 6=일 (금주 요일 저장 번호와 같음)
+// v1.4 한 주 시작: wso 0=일요일, 1=월요일(기본값 1은 예전 시험·호출과 같게)
+export const wsoOf = (s) => (s && Number(s.weekStartsOn) === 0 ? 0 : 1);
+export const weekStartOf = (s, wso = 1) => addDays(s, -((parse(s).getUTCDay() - (wso === 0 ? 0 : 1) + 7) % 7));
+export const weekEndOf = (s, wso = 1) => addDays(weekStartOf(s, wso), 6);
+// 주 안의 순서(0~6)에 맞춘 요일 번호(0=월 … 6=일) 배열. 일요일 시작이면 [6,0,1,2,3,4,5]
+export const weekdayOrder = (wso = 1) => (wso === 0 ? [6, 0, 1, 2, 3, 4, 5] : [0, 1, 2, 3, 4, 5, 6]);
+// 그 날짜가 주에서 몇 번째 날인지(0~6)
+export const weekPos = (s, wso = 1) => daysBetween(weekStartOf(s, wso), s);
 export const weekDates = (ws) => Array.from({ length: 7 }, (_, i) => addDays(ws, i));
 export const monthStartOf = (s) => `${s.slice(0, 7)}-01`;
 export function monthEndOf(s) { const d = parse(monthStartOf(s)); d.setUTCMonth(d.getUTCMonth() + 1); d.setUTCDate(0); return toStr(d); }
@@ -116,16 +123,18 @@ export function dateRange(from, to) { const out = []; for (let d = from; d <= to
 export const localDateStr = (now) => `${now.getFullYear()}-${p2(now.getMonth() + 1)}-${p2(now.getDate())}`;
 export function localDateOfIso(iso) { if (!iso) return null; const d = new Date(iso); return Number.isNaN(d.getTime()) ? null : localDateStr(d); }
 
-// 날짜 귀속: dayCutoffHour(6시) 이전이면 어제를 오늘로 본다
+// v1.4 하루 시작 시각(0~10시, 기본 6). 틀린 값이면 6
+export const cutoffOf = (s) => { const h = s && s.dayCutoffHour != null ? Number(s.dayCutoffHour) : 6; return Number.isInteger(h) && h >= 0 && h <= 10 ? h : 6; };
+// 날짜 귀속: 하루 시작 시각(기본 6시) 이전이면 어제를 오늘로 본다
 export function logicalToday(now, cutoffHour = 6) {
   const s = localDateStr(now);
-  return now.getHours() < cutoffHour ? addDays(s, -1) : s;
+  return now.getHours() < cutoffOf({ dayCutoffHour: cutoffHour }) ? addDays(s, -1) : s;
 }
 
 // 홈의 기본 입력 날짜: 정오 이전이고 어제가 미입력이면 어제, 그 외 오늘.
-// (06시 이전에는 '오늘'이 이미 어제 날짜이므로 그 날짜를 그대로 쓴다)
+// (하루 시작 시각 이전에는 '오늘'이 이미 어제 날짜이므로 그 날짜를 그대로 쓴다)
 export function defaultEntryDate(now, daysMap, settings = DEFAULT_SETTINGS) {
-  const cutoff = settings.dayCutoffHour ?? 6;
+  const cutoff = cutoffOf(settings);
   const today = logicalToday(now, cutoff);
   if (now.getHours() < cutoff) return today;
   const yesterday = addDays(today, -1);
@@ -221,14 +230,14 @@ export function projectDays(s, today) {
   return out;
 }
 
-// 귀가 시각: 06:00 이전은 다음 날로 본다
-export function timeToMin(hhmm) {
+// 귀가 시각: 하루 시작 시각(기본 06:00) 이전은 다음 날로 본다. 0시면 넘기지 않음(일반 달력)
+export function timeToMin(hhmm, cutoffHour = 6) {
   if (!hhmm || !/^\d{1,2}:\d{2}$/.test(hhmm)) return null;
   const [h, m] = hhmm.split(':').map(Number);
-  return h * 60 + m + (h < 6 ? 1440 : 0);
+  return h * 60 + m + (h < cutoffHour ? 1440 : 0);
 }
-export function homeLateMin(homeAt, homeBy) {
-  const a = timeToMin(homeAt), b = timeToMin(homeBy);
+export function homeLateMin(homeAt, homeBy, cutoffHour = 6) {
+  const a = timeToMin(homeAt, cutoffHour), b = timeToMin(homeBy, cutoffHour);
   if (a == null || b == null) return 0;
   return Math.max(0, a - b);
 }
@@ -238,20 +247,20 @@ export const isDrinkDay = (d) => !!d && d.status === 'drank' && (Number(d.alcoho
 export const isHeavy = (d, s) => isDrinkDay(d) && d.alcoholG >= s.heavyG;
 
 // 계획 대비 결과(계획이 있고 입력된 날). { limitOk, homeOk, overG, lateMin }
-export function planOutcome(day) {
+export function planOutcome(day, cutoffHour = 6) {
   if (!day || !day.plan || !isEntered(day)) return null;
   const g = isDrinkDay(day) ? day.alcoholG : 0;
-  const lateMin = isDrinkDay(day) ? homeLateMin(day.homeAt, day.plan.homeBy) : 0;
+  const lateMin = isDrinkDay(day) ? homeLateMin(day.homeAt, day.plan.homeBy, cutoffHour) : 0;
   return { limitOk: g <= day.plan.limitG, homeOk: lateMin === 0, overG: Math.max(0, g - day.plan.limitG), lateMin };
 }
-export const planKept = (day) => { const o = planOutcome(day); return !!o && o.limitOk && o.homeOk; };
+export const planKept = (day, cutoffHour = 6) => { const o = planOutcome(day, cutoffHour); return !!o && o.limitOk && o.homeOk; };
 
 // 하루 판정(우선순위 순): none / sober / heavy / over / planned / drank
 export function dayResult(day, s) {
   if (!isEntered(day)) return 'none';
   if (!isDrinkDay(day)) return 'sober';
   if (day.alcoholG >= s.heavyG) return 'heavy';
-  if (day.plan) return planKept(day) ? 'planned' : 'over';
+  if (day.plan) return planKept(day, cutoffOf(s)) ? 'planned' : 'over';
   return 'drank';
 }
 export const RESULT_LABEL = { none: '미입력', sober: '안 마심', heavy: '과음', over: '초과', planned: '계획대로', drank: '마심' };
@@ -262,19 +271,24 @@ export function sortGoals(goals) {
   return [...(goals || [])].sort((a, b) => (a.effectiveFrom < b.effectiveFrom ? -1 : a.effectiveFrom > b.effectiveFrom ? 1
     : String(a.createdAt || '') < String(b.createdAt || '') ? -1 : String(a.createdAt || '') > String(b.createdAt || '') ? 1 : 0));
 }
-// 어떤 주의 목표 = effectiveFrom ≤ 그 주 월요일인 줄 중 가장 늦은 것(같은 날이면 나중에 만든 것). 없으면 null
+// 어떤 주(ws 시작)의 목표 = 그 주 시작일 이전 또는 그 주 안에 effectiveFrom이 있는 줄 중 가장 늦은 것
+// (v1.4: effectiveFrom은 "그 날짜가 들어 있는 주부터 적용". 같은 날이면 나중에 만든 것). 없으면 null
 export function goalForWeek(goals, ws) {
+  const end = addDays(ws, 6);
   let g = null;
-  for (const x of sortGoals(goals)) if (x.effectiveFrom <= ws) g = x;
+  for (const x of sortGoals(goals)) if (x.effectiveFrom <= end) g = x;
   return g;
 }
-export const currentGoal = (goals, today) => goalForWeek(goals, weekStartOf(today));
-export const futureGoals = (goals, today) => sortGoals(goals).filter((g) => g.effectiveFrom > weekStartOf(today));
-// 실제로 적용된(같은 시작일의 더 나중 줄에 가려지지 않은) 목표 구간: [{ goal, from, to|null }]
-export function goalPeriods(goals) {
+export const currentGoal = (goals, today, wso = 1) => goalForWeek(goals, weekStartOf(today, wso));
+// 아직 시작하지 않은 단계: 이번 주가 끝난 뒤에 effectiveFrom이 있는 줄
+export const futureGoals = (goals, today, wso = 1) => sortGoals(goals).filter((g) => g.effectiveFrom > weekEndOf(today, wso));
+export const goalStarted = (g, today, wso = 1) => !!g && g.effectiveFrom <= weekEndOf(today, wso);
+// 실제로 적용된(같은 주의 더 나중 줄에 가려지지 않은) 목표 구간: [{ goal, from(주 시작일), to|null }]
+export function goalPeriods(goals, wso = 1) {
   const sorted = sortGoals(goals);
-  const eff = sorted.filter((g, i) => !(sorted[i + 1] && sorted[i + 1].effectiveFrom === g.effectiveFrom));
-  return eff.map((g, i) => ({ goal: g, from: g.effectiveFrom, to: eff[i + 1] ? addDays(eff[i + 1].effectiveFrom, -1) : null }));
+  const wk = (g) => weekStartOf(g.effectiveFrom, wso);
+  const eff = sorted.filter((g, i) => !(sorted[i + 1] && wk(sorted[i + 1]) === wk(g)));
+  return eff.map((g, i) => ({ goal: g, from: wk(g), to: eff[i + 1] ? addDays(wk(eff[i + 1]), -1) : null }));
 }
 
 // ---------- 주간 판정 ----------
@@ -326,16 +340,16 @@ export function weekRemaining(ev) {
   };
 }
 
-// 첫 주(월요일): 시작일과 가장 이른 기록 중 빠른 쪽
+// 첫 주(주 시작일): 시작일과 가장 이른 기록 중 빠른 쪽
 export function firstWeek(daysMap, s, today) {
   let first = s.startDate || today;
   for (const d of Object.keys(daysMap)) if (isEntered(daysMap[d]) && d < first) first = d;
-  return weekStartOf(first);
+  return weekStartOf(first, wsoOf(s));
 }
 
 // 주간 목표 달성 연속 주 수. 진행 중인 주는 일곱 날이 다 지나 판정이 끝났을 때만 센다(이미 미달성이면 연속이 끊김).
 export function goalStreak(daysMap, goals, s, today) {
-  const curWs = weekStartOf(today);
+  const curWs = weekStartOf(today, wsoOf(s));
   const first = firstWeek(daysMap, s, today);
   const evs = [];
   for (let ws = first; ws <= curWs; ws = addDays(ws, 7)) evs.push(weekEval(daysMap, goals, ws, s, today));
@@ -393,11 +407,11 @@ export function counselNeeded(daysMap, s, today) {
 // ---------- 목표 제안(능동 조정) ----------
 // { kind: 'lower'|'adjust', from, to } 또는 null
 export function goalSuggestion(daysMap, goals, s, today) {
-  const curWs = weekStartOf(today);
+  const curWs = weekStartOf(today, wsoOf(s));
   const cur = goalForWeek(goals, curWs);
   if (!cur || s.dismissedSuggestion === curWs) return null;
   const w = [1, 2, 3].map((i) => weekEval(daysMap, goals, addDays(curWs, -7 * i), s, today));
-  const hasNext = goals.some((g) => g.effectiveFrom > curWs);
+  const hasNext = goals.some((g) => g.effectiveFrom > addDays(curWs, 6));
   if (w.every((e) => e.status === 'achieved') && !hasNext && cur.weeklyDrinkDaysMax > 0) {
     return { kind: 'lower', from: cur.weeklyDrinkDaysMax, to: cur.weeklyDrinkDaysMax - 1 };
   }
@@ -411,18 +425,47 @@ export function goalSuggestion(daysMap, goals, s, today) {
 }
 
 // ---------- 주간 계획 카드 ----------
-// 이번 주 계획이 없고 월·화요일이면 이번 주, 일요일 저녁(18시~)이면 다음 주 것. 아니면 null
-export function weekPlanPrompt(weekPlans, today, hour) {
-  const ws = weekStartOf(today);
-  const wd = weekdayIdx(today);
-  if ((wd === 0 || wd === 1) && !weekPlans[ws]) return ws;
-  if (wd === 6 && hour >= 18 && !weekPlans[addDays(ws, 7)]) return addDays(ws, 7);
+// 이번 주 계획이 없고 주의 첫 이틀(월 시작: 월·화 / 일 시작: 일·월)이면 이번 주,
+// 주의 마지막 날 저녁(18시~, 월 시작: 일 / 일 시작: 토)이면 다음 주 것. 아니면 null
+export function weekPlanPrompt(weekPlans, today, hour, wso = 1) {
+  const ws = weekStartOf(today, wso);
+  const pos = weekPos(today, wso);
+  const has = (k) => !!weekPlans[k] && !weekPlans[k].auto;
+  if (pos <= 1 && !has(ws)) return ws;
+  if (pos === 6 && hour >= 18 && !has(addDays(ws, 7))) return addDays(ws, 7);
   return null;
+}
+
+// v1.4 한 주 시작을 바꿀 때 주간 계획을 새 기준으로 다시 묶는다(찍어 둔 "마실 날"은 그대로 남김).
+// 새 주마다 그 주에 든 마실 날을 모은다. 예전 계획의 주와 4일 이상 겹치는 새 주(시작일 차이 3일 이하)는 계획을 세운 주로 본다.
+// skipped는 겹친 예전 계획이 모두 건너뛰기였고 마실 날이 없을 때만 true
+export function regroupWeekPlans(plans, wso) {
+  const out = {};
+  // auto: 마실 날만 옮겨 와서 생긴 줄(그 주에 계획을 세운 것은 아님 → 주간 계획 카드는 계속 뜬다)
+  const get = (ws) => out[ws] || (out[ws] = { weekStart: ws, plannedDays: [], skipped: true, auto: true, createdAt: null });
+  for (const p of plans || []) {
+    if (!p || !isDateStr(p.weekStart)) continue;
+    if (!p.auto) {
+      const ws = weekStartOf(p.weekStart, wso);
+      const w = get(daysBetween(ws, p.weekStart) <= 3 ? ws : addDays(ws, 7));
+      w.auto = false;
+      if (!p.skipped) w.skipped = false;
+      if (p.createdAt && (!w.createdAt || p.createdAt < w.createdAt)) w.createdAt = p.createdAt;
+    }
+    for (const d of p.plannedDays || []) {
+      if (!isDateStr(d)) continue;
+      const x = get(weekStartOf(d, wso));
+      if (!x.plannedDays.includes(d)) x.plannedDays.push(d);
+      if (p.createdAt && (!x.createdAt || p.createdAt < x.createdAt)) x.createdAt = p.createdAt;
+    }
+  }
+  return Object.values(out).map((w) => ({ ...w, plannedDays: w.plannedDays.sort(), skipped: w.plannedDays.length ? false : w.skipped, createdAt: w.createdAt || new Date(0).toISOString() }))
+    .sort((a, b) => (a.weekStart < b.weekStart ? -1 : 1));
 }
 
 // ---------- 상한 정하기 안내 ----------
 export function planHints(daysMap, goals, s, date, limitG) {
-  const ws = weekStartOf(date);
+  const ws = weekStartOf(date, wsoOf(s));
   const goal = goalForWeek(goals, ws);
   let others = 0, otherG = 0;
   for (const d of weekDates(ws)) {
@@ -441,8 +484,14 @@ export function planHints(daysMap, goals, s, date, limitG) {
 }
 
 // ---------- 백업 ----------
+// 백업한 때의 날짜도 하루 시작 시각으로 센다(새벽 백업이 "-1일 전"이 되지 않게, v1.4)
+export function backupDateOf(s) {
+  if (!s || !s.lastBackupAt) return null;
+  const d = new Date(s.lastBackupAt);
+  return Number.isNaN(d.getTime()) ? null : logicalToday(d, cutoffOf(s));
+}
 export function backupDue(s, today) {
-  const last = localDateOfIso(s.lastBackupAt);
+  const last = backupDateOf(s);
   if (!last) return !!s.startDate && daysBetween(s.startDate, today) >= 7;
   return daysBetween(last, today) >= 7;
 }
@@ -479,7 +528,7 @@ const csvCell = (v) => {
 export function buildCsv(daysList, goals, s) {
   const lines = [CSV_HEADER];
   for (const d of [...daysList].sort((a, b) => (a.date < b.date ? -1 : 1))) {
-    const goal = goalForWeek(goals, weekStartOf(d.date));
+    const goal = goalForWeek(goals, weekStartOf(d.date, wsoOf(s)));
     const drinks = (d.drinks || []).map((x) => (x.type === 'manual' ? `manual:${x.g}g` : `${x.type}:${x.count}`)).join('|');
     const b = (v) => (v == null ? '' : v ? 1 : 0);
     const f = foodOf(d);

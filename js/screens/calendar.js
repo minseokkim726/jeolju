@@ -42,15 +42,16 @@ export function render(root, d, ctx) {
   const last = R.monthEndOf(first);
   if (!view.selected || view.selected.slice(0, 7) !== ym) { view.selected = d.today.slice(0, 7) === ym ? d.today : null; view.editing = false; }
 
-  // 월요일 시작, 주 단위 줄
+  // 한 주 시작(설정)부터, 주 단위 줄
+  const wso = R.wsoOf(s);
   const weeks = [];
-  for (let ws = R.weekStartOf(first); ws <= last; ws = R.addDays(ws, 7)) weeks.push(ws);
+  for (let ws = R.weekStartOf(first, wso); ws <= last; ws = R.addDays(ws, 7)) weeks.push(ws);
 
   const cellHtml = (date) => {
     if (date.slice(0, 7) !== ym) return '<div class="cell out" aria-hidden="true"></div>';
     const day = d.days[date];
     const future = date > d.today;
-    const ws = R.weekStartOf(date);
+    const ws = R.weekStartOf(date, wso);
     const goal = R.goalForWeek(d.goals, ws);
     const planned = future && (((d.weekPlans[ws] && d.weekPlans[ws].plannedDays) || []).includes(date) || !!(day && day.plan));
     const viol = goal && (goal.dryWeekdays || []).includes(R.weekdayIdx(date)) && R.isDrinkDay(day);
@@ -89,7 +90,7 @@ export function render(root, d, ctx) {
       </div>
       <div class="card cal-card">
         <div class="cal-grid">
-          ${WD.map((w) => `<div class="hd">${w}</div>`).join('')}<div class="hd">주</div>
+          ${R.weekdayOrder(wso).map((i) => `<div class="hd">${WD[i]}</div>`).join('')}<div class="hd">주</div>
           ${weeks.map((ws) => R.weekDates(ws).map(cellHtml).join('') + wsumHtml(ws)).join('')}
         </div>
         <details class="legend-wrap" ${view.legendOpen ? 'open' : ''}>

@@ -1,8 +1,8 @@
-// 설정: 표시 단위 · 과음 기준 · 칸 보이기 · 평소 음주량(기준선) · 백업 · 환산표
+// 설정: 한 주 시작 · 하루 시작 시각(v1.4, 누르면 확인 후 바로 저장) · 표시 단위 · 과음 기준 · 칸 보이기 · 평소 음주량(기준선) · 백업 · 환산표
 import * as repo from '../repo.js';
 import * as R from '../rules.js';
 import { esc } from '../format.js';
-import { toast, exportBackup, importBackup, exportCsvFile, askNumber, stepperHtml } from './shared.js';
+import { toast, ask, exportBackup, importBackup, exportCsvFile, askNumber, stepperHtml } from './shared.js';
 import { APP_VERSION } from '../version.js';
 
 export function render(root, d, ctx) {
@@ -14,12 +14,25 @@ export function render(root, d, ctx) {
     days: b.drinkDaysPerWeek, perG: b.gPerOccasion, heavyPW: b.heavyPerWeek,
     bTouched: !!s.baseline, // 기준선을 적은 적이 없으면 손댔을 때만 저장
   };
-  const last = R.localDateOfIso(s.lastBackupAt);
+  const last = R.backupDateOf(s);
 
   root.innerHTML = `
     <form class="page form" novalidate>
       <div class="row"><a class="back" href="#/today">← 오늘</a></div>
       <div class="h1">설정</div>
+      <div class="card" style="gap:12px">
+        <div class="h2" id="set-wso">한 주 시작</div>
+        <div class="modes2" role="group" aria-labelledby="set-wso">
+          <button type="button" class="pill" data-wso="0">일요일</button>
+          <button type="button" class="pill" data-wso="1">월요일</button>
+        </div>
+        <div class="small">이번 주 띠·달력·주간 목표 판정·통계가 이 요일부터 한 주로 셉니다.</div>
+      </div>
+      <div class="card" style="gap:12px">
+        <label class="h2" for="set-cutoff">하루 시작 시각</label>
+        <select class="input" id="set-cutoff">${Array.from({ length: 11 }, (_, h) => `<option value="${h}" ${h === R.cutoffOf(s) ? 'selected' : ''}>${h}시${h === 6 ? ' (기본)' : ''}</option>`).join('')}</select>
+        <div class="small">이 시각 전의 기록은 전날로 들어가요. 자정 넘긴 술자리를 전날로 묶기 위한 것이에요. 0시로 하면 보통 달력 날짜와 같아져 자정 넘긴 술자리는 다음 날로 들어가요.</div>
+      </div>
       <div class="card" style="gap:12px">
         <div class="h2">표시 단위</div>
         <div class="modes2" role="group" aria-label="표시 단위">
@@ -79,6 +92,28 @@ export function render(root, d, ctx) {
     root.querySelectorAll('[data-show]').forEach((x) => { x.checked = !!st[x.dataset.show]; });
   }
   paint();
+
+  // v1.4 한 주 시작: 확인 후 바로 저장(주간 계획도 새 기준으로 다시 묶음). 다른 칸의 고치는 중인 값은 그대로 둔다
+  let wso = R.wsoOf(s);
+  const paintWso = () => root.querySelectorAll('[data-wso]').forEach((x) => x.setAttribute('aria-pressed', String(Number(x.dataset.wso) === wso)));
+  paintWso();
+  root.querySelectorAll('[data-wso]').forEach((x) => x.addEventListener('click', async () => {
+    const v = Number(x.dataset.wso);
+    if (v === wso) return;
+    const ok = await ask({ title: `한 주 시작을 ${v === 0 ? '일요일' : '월요일'}로 바꿀까요?`, message: '지난 주들의 음주일·달성 판정도 새 기준으로 다시 계산돼요. 기록은 그대로예요.', choices: [{ label: '바꾸기', value: true, kind: 'primary' }, { label: '취소', value: false }] });
+    if (!ok) return;
+    try { await repo.setWeekStart(v); wso = v; paintWso(); toast(`한 주를 ${v === 0 ? '일요일' : '월요일'}부터 셉니다`); } catch (e) { q('[data-el="err"]').textContent = `저장하지 못했어요: ${e.message || e}`; }
+  }));
+  // v1.4 하루 시작 시각: 확인 후 바로 저장(앞으로의 기록에만 적용)
+  const cutSel = q('#set-cutoff');
+  let cutoff = R.cutoffOf(s);
+  cutSel.addEventListener('change', async () => {
+    const v = Number(cutSel.value);
+    const ok = await ask({ title: `하루 시작을 ${v}시로 바꿀까요?`, message: '이미 적은 기록의 날짜는 바뀌지 않아요.', choices: [{ label: '바꾸기', value: true, kind: 'primary' }, { label: '취소', value: false }] });
+    if (!ok) { cutSel.value = String(cutoff); return; }
+    try { await repo.saveSettings({ dayCutoffHour: v }); cutoff = v; toast(`하루를 ${v}시부터 셉니다`); } catch (e) { cutSel.value = String(cutoff); q('[data-el="err"]').textContent = `저장하지 못했어요: ${e.message || e}`; }
+  });
+
   root.querySelectorAll('[data-unit]').forEach((x) => x.addEventListener('click', () => { st.unit = x.dataset.unit; paint(); }));
   root.querySelectorAll('[data-show]').forEach((x) => x.addEventListener('change', () => { st[x.dataset.show] = x.checked; }));
   const step = (id, fn) => root.querySelectorAll(`[data-stepper="${id}"] [data-step]`).forEach((x) => x.addEventListener('click', () => { if (id[0] === 'b') st.bTouched = true; fn(Number(x.dataset.step)); paint(); }));

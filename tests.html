@@ -69,7 +69,8 @@ function eq(name, actual, expected) {
 }
 function run(name, fn) { try { fn(); } catch (err) { eq(`${name} (예외)`, String(err && err.stack || err), '예외 없음'); } }
 
-const S = { ...R.DEFAULT_SETTINGS, startDate: '2026-11-02' };
+// 기존 시험은 월요일 기준(v1.4부터 새로 설치 기본은 일요일)
+const S = { ...R.DEFAULT_SETTINGS, weekStartsOn: 1, startDate: '2026-11-02' };
 // 기록 만들기: { 날짜: 값 } — 0 = 안 마심, 숫자 = 마신 g, 객체 = 그대로 덮어쓰기
 function days(map) {
   const out = {};
@@ -546,6 +547,119 @@ run('통계', () => {
   });
   eq('주간 요약 복사 글', ST.weekSummaryText(WK, [goal('2026-11-09', 3)], S3, '2026-11-23', '2026-11-29'),
     '[절주노트 주간 요약] 11/23~11/29 · 목표 주 3회 이하\n음주일 2/3 · 과음 0 · 총량 소주 9잔 · 상한 달성 2/2\n안 마신 날 5 · 입력 7/7일 · 목표 달성 2주 연속\n체중 78.4 → 77.9kg');
+});
+
+// ---------- v1.4 한 주 시작(일/월) · 하루 시작 시각 ----------
+const S0 = { ...S, weekStartsOn: 0 };
+
+run('v1.4 주 시작', () => {
+  group('v1.4 한 주 시작 일/월: 주 시작일·주 경계·월말·연말');
+  eq('기본값: 새로 설치 = 일요일(0)', R.DEFAULT_SETTINGS.weekStartsOn, 0);
+  eq('값 없음 → 월요일 기준(1), 0 → 0', [R.wsoOf({}), R.wsoOf({ weekStartsOn: 1 }), R.wsoOf({ weekStartsOn: 0 })], [1, 1, 0]);
+  eq('일 시작: 11/21(토) → 11/15', R.weekStartOf('2026-11-21', 0), '2026-11-15');
+  eq('일 시작: 11/22(일) → 11/22 (토→일 경계)', R.weekStartOf('2026-11-22', 0), '2026-11-22');
+  eq('일 시작: 11/23(월) → 11/22', R.weekStartOf('2026-11-23', 0), '2026-11-22');
+  eq('월 시작: 11/22(일) → 11/16, 11/23(월) → 11/23 (일→월 경계)', [R.weekStartOf('2026-11-22', 1), R.weekStartOf('2026-11-23', 1)], ['2026-11-16', '2026-11-23']);
+  eq('월말을 걸친 주: 12/01(화) → 일 11/29 · 월 11/30', [R.weekStartOf('2026-12-01', 0), R.weekStartOf('2026-12-01', 1)], ['2026-11-29', '2026-11-30']);
+  eq('연말을 걸친 주: 2027-01-01(금) → 일 2026-12-27 · 월 2026-12-28', [R.weekStartOf('2027-01-01', 0), R.weekStartOf('2027-01-01', 1)], ['2026-12-27', '2026-12-28']);
+  eq('주의 끝: 일 시작 11/25 → 11/28(토)', R.weekEndOf('2026-11-25', 0), '2026-11-28');
+  eq('요일 순서: 일 시작 [일,월,…,토] / 월 시작', [R.weekdayOrder(0), R.weekdayOrder(1)], [[6, 0, 1, 2, 3, 4, 5], [0, 1, 2, 3, 4, 5, 6]]);
+  eq('주 안의 순서: 11/28(토)은 일 시작 6번째 · 월 시작 5번째', [R.weekPos('2026-11-28', 0), R.weekPos('2026-11-28', 1)], [6, 5]);
+  const D = days({ ...fill('2026-12-27', '2027-01-02', 0), '2026-12-27': 20, '2026-12-31': 20, '2027-01-02': 20 });
+  eq('일 시작 연말 주(12/27~1/2) 음주일 3', R.weekEval(D, [goal('2026-11-02', 2)], '2026-12-27', S0, '2027-01-10').drinkDays, 3);
+});
+
+run('v1.4 같은 기록 일/월 판정', () => {
+  group('v1.4 같은 기록, 일/월 기준 음주일·달성 판정');
+  const G = [goal('2026-11-02', 2)];
+  // 11/20(금)·11/21(토)·11/22(일)·11/23(월) 마심, 나머지 안 마심
+  const D = days({ ...fill('2026-11-01', '2026-11-29', 0), '2026-11-20': 20, '2026-11-21': 20, '2026-11-22': 20, '2026-11-23': 20 });
+  const T = '2026-11-30';
+  const m = R.weekEval(D, G, '2026-11-16', S, T);
+  eq('월 기준 11/16~22: 음주일 3 → 미달성', [m.drinkDays, m.status], [3, 'missed']);
+  eq('월 기준 11/23~29: 음주일 1 → 달성', R.weekEval(D, G, '2026-11-23', S, T).drinkDays, 1);
+  const a = R.weekEval(D, G, '2026-11-15', S0, T), b = R.weekEval(D, G, '2026-11-22', S0, T);
+  eq('일 기준 11/15~21: 음주일 2 → 달성', [a.drinkDays, a.status], [2, 'achieved']);
+  eq('일 기준 11/22~28: 음주일 2 → 달성', [b.drinkDays, b.status], [2, 'achieved']);
+  eq('달성 연속 주: 일 기준 4주 · 월 기준 1주', [R.goalStreak(D, G, S0, T).current, R.goalStreak(D, G, S, T).current], [4, 1]);
+  eq('주별 추이(통계): 일 [2,2] · 월 [3,1]', [ST.weekly(D, G, S0, '2026-11-15', '2026-11-28', T).map((w) => w.drinkDays), ST.weekly(D, G, S, '2026-11-16', '2026-11-29', T).map((w) => w.drinkDays)], [[2, 2], [3, 1]]);
+  eq('통계 "이번 주" 기간(11/25 수): 일 11/22~ · 월 11/23~', [ST.periodRange('week', D, S0, '2026-11-25').from, ST.periodRange('week', D, S, '2026-11-25').from], ['2026-11-22', '2026-11-23']);
+  eq('요일 패턴 막대 순서: 일 시작이면 일요일부터', ST.weekdayPattern(D, S0, '2026-11-01', '2026-11-29').order, [6, 0, 1, 2, 3, 4, 5]);
+  const h0 = R.planHints(D, G, S0, '2026-11-24', 26), h1 = R.planHints(D, G, S, '2026-11-24', 26);
+  eq('상한 정하기 11/24: 일 기준 3번째(넘음) · 월 기준 2번째', [h0.nth, h0.overDays, h1.nth, h1.overDays], [3, true, 2, false]);
+  eq('주간 요약 기간(일 기준)', ST.weekSummaryText(D, G, S0, '2026-11-22', '2026-11-28').split('\n')[0], '[절주노트 주간 요약] 11/22~11/28 · 목표 주 2회 이하');
+  eq('CSV 주 목표도 주 기준을 따름(일 기준 11/22 행)', R.buildCsv([D['2026-11-22']], [goal('2026-11-02', 3), goal('2026-11-23', 1)], S0).split('\r\n')[1].split(',')[17], '1');
+});
+
+run('v1.4 주간 계획 카드', () => {
+  group('v1.4 주간 계획 카드(일 시작: 일·월요일, 토요일 저녁)');
+  eq('일요일, 계획 없음 → 이번 주(11/22)', R.weekPlanPrompt({}, '2026-11-22', 9, 0), '2026-11-22');
+  eq('월요일 → 이번 주(11/22)', R.weekPlanPrompt({}, '2026-11-23', 9, 0), '2026-11-22');
+  eq('화요일 → 없음', R.weekPlanPrompt({}, '2026-11-24', 9, 0), null);
+  eq('토요일 19시 → 다음 주(11/29)', R.weekPlanPrompt({}, '2026-11-28', 19, 0), '2026-11-29');
+  eq('토요일 10시 → 없음', R.weekPlanPrompt({}, '2026-11-28', 10, 0), null);
+  eq('일요일, 이미 정함 → 없음', R.weekPlanPrompt({ '2026-11-22': { plannedDays: [] } }, '2026-11-22', 9, 0), null);
+  eq('마실 날만 옮겨 온 주(auto) → 카드 뜸', R.weekPlanPrompt({ '2026-11-22': { plannedDays: ['2026-11-27'], auto: true } }, '2026-11-22', 9, 0), '2026-11-22');
+});
+
+run('v1.4 목표 이력', () => {
+  group('v1.4 목표 이력: 그 날짜가 들어 있는 주부터 적용');
+  const G = [goal('2026-11-02', 3), goal('2026-11-16', 2), goal('2026-12-07', 1)]; // 월요일 날짜(예전 데이터)
+  eq('일 기준 10/25 주 → 없음', R.goalForWeek(G, '2026-10-25'), null);
+  eq('일 기준 11/01 주 → 주 3회(11/02 월요일이 이 주 안)', R.goalForWeek(G, '2026-11-01').weeklyDrinkDaysMax, 3);
+  eq('일 기준 11/08 주 → 주 3회', R.goalForWeek(G, '2026-11-08').weeklyDrinkDaysMax, 3);
+  eq('일 기준 11/15 주 → 주 2회(11/16 월요일이 이 주 안)', R.goalForWeek(G, '2026-11-15').weeklyDrinkDaysMax, 2);
+  eq('일 기준 12/06 주 → 주 1회(미래 단계 12/07)', R.goalForWeek(G, '2026-12-06').weeklyDrinkDaysMax, 1);
+  eq('같은 날 11/15(일)의 현재 목표: 일 기준 2회 · 월 기준 3회', [R.currentGoal(G, '2026-11-15', 0).weeklyDrinkDaysMax, R.currentGoal(G, '2026-11-15', 1).weeklyDrinkDaysMax], [2, 3]);
+  eq('미래 단계(오늘 11/22): 일 기준 [12/07]', R.futureGoals(G, '2026-11-22', 0).map((g) => g.effectiveFrom), ['2026-12-07']);
+  eq('오늘 12/06(일): 일 기준은 이미 시작 · 월 기준은 아직 미래', [R.futureGoals(G, '2026-12-06', 0).length, R.futureGoals(G, '2026-12-06', 1).length, R.goalStarted(G[2], '2026-12-06', 0)], [0, 1, true]);
+  eq('적용 구간(일 기준)', R.goalPeriods(G, 0).map((p) => [p.from, p.to, p.goal.weeklyDrinkDaysMax]), [['2026-11-01', '2026-11-14', 3], ['2026-11-15', '2026-12-05', 2], ['2026-12-06', null, 1]]);
+  const Gs = [goal('2026-11-22', 3), goal('2026-12-06', 2)]; // 일요일 날짜(새 데이터)
+  eq('일요일 날짜 목표를 월 기준으로 보면: 11/16 주에 적용', R.goalForWeek(Gs, '2026-11-16').weeklyDrinkDaysMax, 3);
+  eq('3주 연속 달성 제안: 일 기준, 다음 단계가 이번 주 뒤에 있으면 → 없음', R.goalSuggestion(days(fill('2026-11-01', '2026-11-21', 0)), [goal('2026-11-01', 3), goal('2026-11-30', 2)], S0, '2026-11-22'), null);
+  eq('3주 연속 달성 제안: 일 기준 → 낮추기', R.goalSuggestion(days(fill('2026-11-01', '2026-11-21', 0)), [goal('2026-11-01', 3)], S0, '2026-11-22'), { kind: 'lower', from: 3, to: 2 });
+});
+
+run('v1.4 주간 계획 다시 묶기', () => {
+  group('v1.4 주 시작을 바꿔도 찍어 둔 마실 날이 남음');
+  const plans = [
+    { weekStart: '2026-11-16', plannedDays: [], skipped: true, createdAt: '2026-11-16T09:00:00Z' },
+    { weekStart: '2026-11-23', plannedDays: ['2026-11-27', '2026-11-29'], skipped: false, createdAt: '2026-11-23T09:00:00Z' },
+  ];
+  const to0 = R.regroupWeekPlans(plans, 0);
+  eq('월→일: 주 키·마실 날·건너뛰기·auto', to0.map((w) => [w.weekStart, w.plannedDays, w.skipped, w.auto]), [['2026-11-15', [], true, false], ['2026-11-22', ['2026-11-27'], false, false], ['2026-11-29', ['2026-11-29'], false, true]]);
+  eq('월→일: 마실 날 모두 남음', to0.flatMap((w) => w.plannedDays), ['2026-11-27', '2026-11-29']);
+  const back = R.regroupWeekPlans(to0, 1);
+  eq('일→월로 되돌리면 원래대로', back.map((w) => [w.weekStart, w.plannedDays, w.skipped, w.auto]), [['2026-11-16', [], true, false], ['2026-11-23', ['2026-11-27', '2026-11-29'], false, false]]);
+  eq('같은 기준으로 다시 묶어도 그대로', R.regroupWeekPlans(plans, 1).map((w) => [w.weekStart, w.plannedDays, w.skipped]), [['2026-11-16', [], true], ['2026-11-23', ['2026-11-27', '2026-11-29'], false]]);
+  eq('백업 형식 검사 통과', R.validateBackup({ app: 'jeolju', schemaVersion: 2, data: { days: [], goals: [], weekPlans: to0, settings: {}, meta: [] } }).ok, true);
+});
+
+run('v1.4 하루 시작 시각', () => {
+  group('v1.4 하루 시작 시각 0/4/5/6/10시');
+  eq('기본값 6, 값 없음·틀린 값 → 6, 0 → 0', [R.DEFAULT_SETTINGS.dayCutoffHour, R.cutoffOf({}), R.cutoffOf({ dayCutoffHour: 11 }), R.cutoffOf({ dayCutoffHour: 0 })], [6, 6, 6, 0]);
+  const cases = [[0, [0, 0], [23, 59]], [4, [3, 59], [4, 0]], [5, [4, 59], [5, 0]], [6, [5, 59], [6, 0]], [10, [9, 59], [10, 0]]];
+  for (const [c, before, after] of cases) {
+    if (c === 0) {
+      eq('0시: 11/20 00:00 → 11/20, 11/19 23:59 → 11/19 (보통 달력)', [R.logicalToday(at(2026, 11, 20, 0, 0), 0), R.logicalToday(at(2026, 11, 19, 23, 59), 0)], ['2026-11-20', '2026-11-19']);
+      continue;
+    }
+    eq(`${c}시: 11/20 ${before[0]}:${String(before[1]).padStart(2, '0')} → 11/19, ${after[0]}:00 → 11/20`, [R.logicalToday(at(2026, 11, 20, ...before), c), R.logicalToday(at(2026, 11, 20, ...after), c)], ['2026-11-19', '2026-11-20']);
+  }
+  const S4 = { ...S, dayCutoffHour: 4 };
+  eq('4시: 03:00 → 기본 입력 날짜 11/19(술자리 시작한 날)', R.defaultEntryDate(at(2026, 11, 20, 3), {}, S4), '2026-11-19');
+  eq('4시: 05:00, 어제 입력함 → 오늘 11/20', R.defaultEntryDate(at(2026, 11, 20, 5), days({ '2026-11-19': 0 }), S4), '2026-11-20');
+  eq('10시: 09:00 → 11/19 / 0시: 00:30, 어제 입력함 → 11/20', [R.defaultEntryDate(at(2026, 11, 20, 9), {}, { ...S, dayCutoffHour: 10 }), R.defaultEntryDate(at(2026, 11, 20, 0, 30), days({ '2026-11-19': 0 }), { ...S, dayCutoffHour: 0 })], ['2026-11-19', '2026-11-20']);
+  eq('귀가 비교(4시): 03:30은 다음 날 → 23:00 목표보다 270분 늦음', R.homeLateMin('03:30', '23:00', 4), 270);
+  eq('귀가 비교(4시): 05:00은 같은 날(아침) → 0', R.homeLateMin('05:00', '23:00', 4), 0);
+  eq('귀가 비교(기본 6시): 05:00은 다음 날 → 360분', R.homeLateMin('05:00', '23:00'), 360);
+  eq('귀가 비교(10시): 09:30은 다음 날 → 630분', R.homeLateMin('09:30', '23:00', 10), 630);
+  const day = days({ x: { status: 'drank', alcoholG: 20, plan: { limitG: 26, homeBy: '23:00' }, homeAt: '05:00' } }).x;
+  eq('하루 판정에 설정 반영: 05:00 귀가 → 6시 over · 4시 planned', [R.dayResult(day, S), R.dayResult(day, S4)], ['over', 'planned']);
+  const bk = { ...S, lastBackupAt: new Date(2026, 10, 22, 5, 30).toISOString() };
+  eq('백업 날짜(11/22 05:30 백업): 6시 기준 11/21 · 0시 기준 11/22', [R.backupDateOf(bk), R.backupDateOf({ ...bk, dayCutoffHour: 0 })], ['2026-11-21', '2026-11-22']);
+  eq('백업 알림: 11/21 05:30 백업, 오늘 11/28 → 7일 지남', R.backupDue({ ...S, lastBackupAt: new Date(2026, 10, 22, 5, 30).toISOString() }, '2026-11-28'), true);
+  eq('통계 상한 달성도 설정 반영(4시)', [ST.summary({ '2026-11-20': { ...day, date: '2026-11-20' } }, S, '2026-11-20', '2026-11-20').planKept, ST.summary({ '2026-11-20': { ...day, date: '2026-11-20' } }, S4, '2026-11-20', '2026-11-20').planKept], [0, 1]);
 });
 
 async function finish() {

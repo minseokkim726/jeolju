@@ -12,7 +12,7 @@ export function resultLine(day, s) {
   let t = R.fmtCount(day.alcoholG, u);
   if (day.homeAt) t += ` · ${day.homeAt} 귀가`;
   if (day.plan) {
-    const o = R.planOutcome(day);
+    const o = R.planOutcome(day, R.cutoffOf(s));
     const p = day.plan;
     const parts = [];
     const homeChecked = !!(p.homeBy && day.homeAt);

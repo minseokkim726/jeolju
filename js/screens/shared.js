@@ -154,19 +154,20 @@ export function dayMark(day, s) {
   return { cls: `st-${r}`, sym: R.RESULT_SYMBOL[r], label: R.RESULT_LABEL[r], result: r };
 }
 
-// 이번 주 띠(월~일 7칸). planned: 마실 날로 찍어 둔 날짜 배열
+// 이번 주 띠(한 주 시작부터 7칸). planned: 마실 날로 찍어 둔 날짜 배열
 export function weekStripHtml(d, ws, planned = [], selected = null) {
   const s = d.settings;
   const goal = R.goalForWeek(d.goals, ws);
   return `<div class="strip" role="list">${R.weekDates(ws).map((date, i) => {
     const future = date > d.today;
     const m = dayMark(d.days[date], s);
-    const dry = goal && (goal.dryWeekdays || []).includes(i);
+    const wd = R.weekdayIdx(date);
+    const dry = goal && (goal.dryWeekdays || []).includes(wd);
     const viol = dry && R.isDrinkDay(d.days[date]);
     const cls = [future ? 'st-future' : m.cls, date === d.today ? 'is-today' : '', planned.includes(date) ? 'is-planned' : '', date === selected ? 'is-sel' : ''].join(' ');
-    const label = `${fmtMD(date)} ${WD[i]} ${future ? '' : m.label}${planned.includes(date) ? ' · 마실 날' : ''}${viol ? ' · 금주 요일 위반' : ''}`;
+    const label = `${fmtMD(date)} ${WD[wd]} ${future ? '' : m.label}${planned.includes(date) ? ' · 마실 날' : ''}${viol ? ' · 금주 요일 위반' : ''}`;
     return `<div class="strip-day" role="listitem" aria-label="${esc(label)}">
-      <span class="wd">${WD[i]}</span>
+      <span class="wd">${WD[wd]}</span>
       <span class="dot ${cls}">${future ? '' : esc(m.sym)}${viol ? '<i class="viol" aria-hidden="true"></i>' : ''}</span>
       <span class="dd">${Number(date.slice(8))}</span>
     </div>`;

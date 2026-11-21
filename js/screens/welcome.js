@@ -4,7 +4,7 @@ import * as R from '../rules.js';
 import { esc, fmtMDWp } from '../format.js';
 import { askNumber, stepperHtml } from './shared.js';
 
-const st = { days: 4.5, perG: 45.5, heavy: 2, preset: 'gradual' };
+const st = { days: 4.5, perG: 45.5, heavy: 2, preset: 'gradual', wso: null };
 
 // 프리셋 목표 줄. 공통: 과음 주 0회, 술자리 상한 소주 4잔
 export function presetGoals(preset, ws) {
@@ -24,7 +24,8 @@ export function render(root, d, ctx) {
   const s = d.settings;
   const u = s.unit;
   const n = ['1', '2', '3'].includes(ctx.param) ? Number(ctx.param) : 1;
-  const ws = R.weekStartOf(d.today);
+  if (st.wso == null) st.wso = R.wsoOf(s); // 새로 설치하면 일요일(기본값)
+  const ws = R.weekStartOf(d.today, st.wso);
   if (n === 1 && s.baseline) { st.days = s.baseline.drinkDaysPerWeek; st.perG = s.baseline.gPerOccasion; st.heavy = s.baseline.heavyPerWeek; }
 
   let body = '';
@@ -44,6 +45,14 @@ export function render(root, d, ctx) {
         <button type="button" class="preset" data-preset="gradual"><span class="t">단계적으로<span class="badge">권장</span></span><span class="d">첫 2주 주 3회 이하 → ${esc(fmtMDWp(p2))}부터 주 2회 이하</span></button>
         <button type="button" class="preset" data-preset="now"><span class="t">바로</span><span class="d">이번 주(${esc(fmtMDWp(ws))})부터 주 2회 이하</span></button>
         <button type="button" class="preset" data-preset="custom"><span class="t">직접 정하기</span><span class="d">음주일·과음·총량·금주 요일을 직접</span></button>
+      </div>
+      <div class="card" style="gap:10px">
+        <div class="label-strong" id="wl-wso">한 주 시작</div>
+        <div class="modes2" role="group" aria-labelledby="wl-wso">
+          <button type="button" class="pill" data-wso="0">일요일</button>
+          <button type="button" class="pill" data-wso="1">월요일</button>
+        </div>
+        <div class="small">주간 목표를 이 요일부터 한 주로 셉니다. 설정에서 바꿀 수 있어요.</div>
       </div>`;
   } else {
     body = `<div class="h1">기간과 장기 목표</div>
@@ -104,15 +113,22 @@ export function render(root, d, ctx) {
     });
     q('[data-act="skip"]').addEventListener('click', () => ctx.go('welcome/2'));
   } else if (n === 2) {
-    const paint = () => root.querySelectorAll('[data-preset]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.preset === st.preset)));
+    const paint = () => {
+      root.querySelectorAll('[data-preset]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.preset === st.preset)));
+      root.querySelectorAll('[data-wso]').forEach((b) => b.setAttribute('aria-pressed', String(Number(b.dataset.wso) === st.wso)));
+    };
     paint();
     root.querySelectorAll('[data-preset]').forEach((b) => b.addEventListener('click', () => { st.preset = b.dataset.preset; paint(); }));
+    // 한 주 시작을 바꾸면 프리셋 날짜(이번 주·2주 뒤)가 바뀌므로 다시 그린다
+    root.querySelectorAll('[data-wso]').forEach((b) => b.addEventListener('click', () => { st.wso = Number(b.dataset.wso); ctx.refresh(); }));
+    const saveWso = async () => { if (st.wso !== R.wsoOf(s)) await repo.setWeekStart(st.wso); };
     q('[data-act="next"]').addEventListener('click', async () => {
+      await saveWso();
       if (st.preset === 'custom') { ctx.go('goal/welcome'); return; }
       await repo.replaceGoals(presetGoals(st.preset, ws));
       ctx.go('welcome/3');
     });
-    q('[data-act="skip"]').addEventListener('click', () => ctx.go('welcome/3')); // 기본 목표(주 2회) 그대로
+    q('[data-act="skip"]').addEventListener('click', async () => { await saveWso(); ctx.go('welcome/3'); }); // 기본 목표(주 2회) 그대로
   } else {
     q('[data-act="next"]').addEventListener('click', async () => {
       const start = q('#wl-start').value;

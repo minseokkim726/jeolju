@@ -46,17 +46,18 @@ export function goalText(g) {
 }
 
 function planCardHtml(d) {
-  const ws = R.weekPlanPrompt(d.weekPlans, d.today, d.now.getHours());
+  const ws = R.weekPlanPrompt(d.weekPlans, d.today, d.now.getHours(), R.wsoOf(d.settings));
   if (!ws) return '';
   const goal = R.goalForWeek(d.goals, ws);
-  if (wp.weekStart !== ws) { wp.weekStart = ws; wp.days = []; }
+  // 한 주 시작을 바꿔 옮겨 온 마실 날이 있으면 미리 찍혀 있게(v1.4)
+  if (wp.weekStart !== ws) { wp.weekStart = ws; wp.days = [...((d.weekPlans[ws] && d.weekPlans[ws].plannedDays) || [])]; }
   const isNext = ws > d.today;
   const max = goal ? goal.weeklyDrinkDaysMax : null;
   const over = max != null && wp.days.length > max ? wp.days.length - max : 0;
   return `<div class="card plan-week" data-el="weekplan">
     <div class="h2">${isNext ? `다음 주(${fmtWeek(ws)})` : '이번 주'} 목표 ${esc(goalText(goal))}. 마실 날이 정해져 있나요?</div>
     <div class="wd-chips" role="group" aria-label="마실 날 고르기">
-      ${R.weekDates(ws).map((date, i) => `<button type="button" class="wd-chip" data-wpday="${date}" aria-pressed="${wp.days.includes(date)}" ${date < d.today ? 'disabled' : ''}>${WD[i]}<small>${Number(date.slice(8))}</small></button>`).join('')}
+      ${R.weekDates(ws).map((date) => `<button type="button" class="wd-chip" data-wpday="${date}" aria-pressed="${wp.days.includes(date)}" ${date < d.today ? 'disabled' : ''}>${WD[R.weekdayIdx(date)]}<small>${Number(date.slice(8))}</small></button>`).join('')}
     </div>
     <div class="small tone-warn" data-el="wpover">${over ? `목표보다 ${over}일 많아요` : ''}</div>
     <div class="btn-row">
@@ -69,7 +70,7 @@ function planCardHtml(d) {
 export function render(root, d, ctx) {
   const s = d.settings;
   const u = s.unit;
-  const ws = R.weekStartOf(d.today);
+  const ws = R.weekStartOf(d.today, R.wsoOf(s));
   const ev = R.weekEval(d.days, d.goals, ws, s, d.today);
   const goal = ev.goal;
   const planned = (d.weekPlans[ws] && d.weekPlans[ws].plannedDays) || [];

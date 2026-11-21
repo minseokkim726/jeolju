@@ -19,15 +19,17 @@ export function recentLevel(days, today) {
 export function render(root, d, ctx) {
   const s = d.settings;
   const u = s.unit;
-  const curWs = R.weekStartOf(d.today);
+  const wso = R.wsoOf(s);
+  const curWs = R.weekStartOf(d.today, wso);
   const mode = ctx.param === 'step' || ctx.param === 'welcome' || ctx.param === 'new' ? ctx.param : 'edit';
   const editing = mode === 'edit' ? d.goals.find((g) => g.id === ctx.param) : null;
-  if (mode === 'edit' && (!editing || editing.effectiveFrom <= curWs)) {
+  if (mode === 'edit' && (!editing || R.goalStarted(editing, d.today, wso))) {
     root.innerHTML = '<div class="page"><a class="back" href="#/goals">← 목표</a><div class="small">고칠 수 있는 단계가 아니에요(이미 시작했거나 없음).</div></div>';
     return;
   }
   const lastFrom = d.goals.reduce((m, g) => (g.effectiveFrom > m ? g.effectiveFrom : m), curWs);
-  const base = editing || (mode === 'step' ? R.goalForWeek(d.goals, lastFrom) : R.currentGoal(d.goals, d.today)) || R.DEFAULT_GOAL;
+  const lastWs = R.weekStartOf(lastFrom, wso);
+  const base = editing || (mode === 'step' ? R.goalForWeek(d.goals, lastWs) : R.currentGoal(d.goals, d.today, wso)) || R.DEFAULT_GOAL;
   const st = {
     max: base.weeklyDrinkDaysMax, heavy: base.heavyMaxPerWeek, totalOn: base.weeklyTotalG != null,
     totalG: base.weeklyTotalG ?? base.weeklyDrinkDaysMax * base.defaultLimitG,
@@ -35,14 +37,15 @@ export function render(root, d, ctx) {
   };
   if (mode === 'step' && !editing) st.max = Math.max(0, st.max - 1);
 
-  // 적용 시작 후보(월요일만)
+  // 적용 시작 후보(한 주 시작 요일만). 고치는 단계의 날짜가 다른 요일이면(예: 월요일 기준일 때 만든 단계) 그 주의 시작일로 보여 준다
   const mondays = [];
-  const firstPick = mode === 'step' ? R.addDays(lastFrom, 7) : mode === 'edit' ? R.addDays(curWs, 7) : R.addDays(curWs, 14);
+  const editWs = editing ? R.weekStartOf(editing.effectiveFrom, wso) : null;
+  const firstPick = mode === 'step' ? R.addDays(lastWs, 7) : mode === 'edit' ? R.addDays(curWs, 7) : R.addDays(curWs, 14);
   for (let i = 0; i < 26; i++) mondays.push(R.addDays(firstPick, i * 7));
-  if (editing && !mondays.includes(editing.effectiveFrom)) { mondays.push(editing.effectiveFrom); mondays.sort(); }
+  if (editWs && !mondays.includes(editWs)) { mondays.push(editWs); mondays.sort(); }
   const startOpts = mode === 'step' || mode === 'edit' ? ['pick'] : mode === 'welcome' ? ['this'] : ['this', 'next', 'pick'];
   st.start = startOpts[0];
-  st.pick = editing ? editing.effectiveFrom : mondays[0];
+  st.pick = editing ? editWs : mondays[0];
 
   const lv = recentLevel(d.days, d.today);
   const title = { new: '목표 바꾸기', step: '단계 추가', edit: '단계 고치기', welcome: '목표 직접 정하기' }[mode];
@@ -58,7 +61,7 @@ export function render(root, d, ctx) {
         <label class="check"><input type="checkbox" id="ge-total"> 주간 총량 상한 정하기</label>
         <div data-el="total-box">${stepperHtml('total', '주간 총량 상한', '')}</div>
         <div class="field"><div class="label-strong" id="ge-dry">금주 요일 <span class="opt">(선택, 여러 개)</span></div>
-          <div class="wd-chips" role="group" aria-labelledby="ge-dry">${WD.map((w, i) => `<button type="button" class="wd-chip" data-dry="${i}">${w}</button>`).join('')}</div></div>
+          <div class="wd-chips" role="group" aria-labelledby="ge-dry">${R.weekdayOrder(wso).map((i) => `<button type="button" class="wd-chip" data-dry="${i}">${WD[i]}</button>`).join('')}</div></div>
         <div class="label-strong">술자리 상한 기본값</div>${stepperHtml('limit', '술자리 상한 기본값', '')}
       </div>
       <div class="card" style="gap:10px">
@@ -66,8 +69,8 @@ export function render(root, d, ctx) {
         ${startOpts.length > 1 ? `<div class="modes3" role="group" aria-label="적용 시작">
           <button type="button" class="pill" data-start="this">이번 주부터<small>${esc(fmtMDWp(curWs))}</small></button>
           <button type="button" class="pill" data-start="next">다음 주부터<small>${esc(fmtMDWp(R.addDays(curWs, 7)))}</small></button>
-          <button type="button" class="pill" data-start="pick">날짜 고르기<small>월요일만</small></button></div>` : ''}
-        ${startOpts.includes('pick') ? `<select class="input" id="ge-pick" aria-label="적용 시작 월요일">${mondays.map((m) => `<option value="${m}" ${m === st.pick ? 'selected' : ''}>${esc(fmtMDWp(m))}부터</option>`).join('')}</select>` : ''}
+          <button type="button" class="pill" data-start="pick">날짜 고르기<small>${wso === 0 ? '일요일만' : '월요일만'}</small></button></div>` : ''}
+        ${startOpts.includes('pick') ? `<select class="input" id="ge-pick" aria-label="적용 시작 ${wso === 0 ? '일요일' : '월요일'}">${mondays.map((m) => `<option value="${m}" ${m === st.pick ? 'selected' : ''}>${esc(fmtMDWp(m))}부터</option>`).join('')}</select>` : ''}
         ${mode === 'welcome' ? `<div class="small">이번 주(${esc(fmtMDWp(curWs))})부터 적용해요.</div>` : ''}
         <div class="small">지난 주의 달성 판정은 바뀌지 않아요.</div>
       </div>
@@ -120,14 +123,14 @@ export function render(root, d, ctx) {
 
   q('[data-act="save"]').addEventListener('click', async () => {
     const effectiveFrom = st.start === 'this' ? curWs : st.start === 'next' ? R.addDays(curWs, 7) : st.pick;
-    if (R.weekdayIdx(effectiveFrom) !== 0) { q('[data-el="err"]').textContent = '적용 시작은 월요일만 고를 수 있어요.'; return; }
+    if (R.weekPos(effectiveFrom, wso) !== 0) { q('[data-el="err"]').textContent = `적용 시작은 ${wso === 0 ? '일요일' : '월요일'}만 고를 수 있어요.`; return; }
     const goal = {
       weeklyDrinkDaysMax: st.max, heavyMaxPerWeek: st.heavy, weeklyTotalG: st.totalOn ? st.totalG : null,
       dryWeekdays: st.dry, defaultLimitG: st.limitG, effectiveFrom, note: editing ? editing.note || '' : '',
     };
     try {
       if (mode === 'welcome') { await repo.replaceGoals([goal]); ctx.go('welcome/3'); return; }
-      if (editing) await repo.updateFutureGoal(editing.id, goal, d.today);
+      if (editing) await repo.updateFutureGoal(editing.id, goal, d.today, wso);
       else await repo.addGoal(goal);
       toast(`${fmtMDWp(effectiveFrom)}부터 주 ${st.max}회 이하`);
       ctx.go('goals');

@@ -9,8 +9,8 @@ function rng(seed) {
 export function makeSample(today) {
   const rand = rng(20261120);
   const frand = rng(20261130); // 안주용(기존 예시 값이 바뀌지 않게 따로)
-  const curWs = R.weekStartOf(today);
-  const start = R.addDays(curWs, -35); // 6주 전 월요일
+  const curWs = R.weekStartOf(today, 0); // 예시 데이터는 일요일 시작(설정 weekStartsOn 0)
+  const start = R.addDays(curWs, -35); // 6주 전 일요일
   const iso = (d) => `${d}T09:00:00.000Z`;
   const goals = [
     { id: 'demo-g1', ...R.DEFAULT_GOAL, effectiveFrom: start, weeklyDrinkDaysMax: 3, createdAt: iso(start), note: '단계적으로: 첫 2주' },
@@ -104,7 +104,7 @@ export function makeSample(today) {
     app: R.APP_ID, schemaVersion: R.SCHEMA_VERSION, exportedAt: new Date().toISOString(),
     data: {
       days, goals, weekPlans,
-      settings: { ...R.DEFAULT_SETTINGS, onboarded: true, startDate: start, targetDate: `${today.slice(0, 4)}-12-31`, baseline: { drinkDaysPerWeek: 4.5, gPerOccasion: 45.5, heavyPerWeek: 2 }, longTermNote: '45세 이후 비음주', lastBackupAt: new Date().toISOString() },
+      settings: { ...R.DEFAULT_SETTINGS, weekStartsOn: 0, onboarded: true, startDate: start, targetDate: `${today.slice(0, 4)}-12-31`, baseline: { drinkDaysPerWeek: 4.5, gPerOccasion: 45.5, heavyPerWeek: 2 }, longTermNote: '45세 이후 비음주', lastBackupAt: new Date().toISOString() },
       meta: [{ id: 'meta', schemaVersion: R.SCHEMA_VERSION }],
     },
   };

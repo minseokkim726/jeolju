@@ -65,10 +65,15 @@ export function newId(prefix = 'g') {
   return `${prefix}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
 }
 
+// 저장된 설정 + 기본값. v1.4 전부터 쓰던 기기(저장된 설정에 weekStartsOn이 없음)는 월요일로 읽는다(새로 설치하면 일요일)
+function withDefaults(rest) {
+  return { ...R.DEFAULT_SETTINGS, ...(rest.weekStartsOn == null ? { weekStartsOn: 1 } : {}), ...rest };
+}
 function settingsOf(rows) {
-  const s = (rows || []).find((r) => r.id === 'settings') || {};
+  const s = (rows || []).find((r) => r.id === 'settings');
+  if (!s) return { ...R.DEFAULT_SETTINGS };
   const { id, ...rest } = s;
-  return { ...R.DEFAULT_SETTINGS, ...rest };
+  return withDefaults(rest);
 }
 
 // ---------- 시작 ----------
@@ -83,7 +88,7 @@ export async function init(today) {
   const put = {};
   if (!hasSettings) put.settings = [{ id: 'settings', ...R.DEFAULT_SETTINGS, startDate: today }];
   if (!all.goals.length) {
-    put.goals = [{ id: newId('goal'), ...R.DEFAULT_GOAL, effectiveFrom: R.weekStartOf((hasSettings && s.startDate) || today), createdAt: new Date().toISOString() }];
+    put.goals = [{ id: newId('goal'), ...R.DEFAULT_GOAL, effectiveFrom: R.weekStartOf((hasSettings && s.startDate) || today, R.wsoOf(s)), createdAt: new Date().toISOString() }];
   }
   const meta = all.meta.find((m) => m.id === 'meta');
   if (!meta) put.meta = [{ id: 'meta', schemaVersion: R.SCHEMA_VERSION }];
@@ -144,16 +149,16 @@ export async function addGoal(goal) {
   return row;
 }
 // 아직 시작하지 않은 단계만 고치거나 지운다
-export async function updateFutureGoal(id, goal, today) {
+export async function updateFutureGoal(id, goal, today, wso = 1) {
   const all = await readAll(['goals']);
   const cur = all.goals.find((g) => g.id === id);
-  if (!cur || cur.effectiveFrom <= R.weekStartOf(today)) throw new Error('이미 시작된 목표는 고칠 수 없어요. 새 목표를 추가해 주세요.');
+  if (!cur || R.goalStarted(cur, today, wso)) throw new Error('이미 시작된 목표는 고칠 수 없어요. 새 목표를 추가해 주세요.');
   await write({ put: { goals: [{ ...cur, ...goal, id }] } });
 }
-export async function deleteFutureGoal(id, today) {
+export async function deleteFutureGoal(id, today, wso = 1) {
   const all = await readAll(['goals']);
   const cur = all.goals.find((g) => g.id === id);
-  if (!cur || cur.effectiveFrom <= R.weekStartOf(today)) throw new Error('이미 시작된 목표는 지울 수 없어요.');
+  if (!cur || R.goalStarted(cur, today, wso)) throw new Error('이미 시작된 목표는 지울 수 없어요.');
   await write({ del: { goals: [id] } });
 }
 // 첫 실행에서 프리셋을 고르면 기본 목표를 프리셋으로 바꾼다(아직 기록이 쌓이기 전)
@@ -165,6 +170,14 @@ export async function replaceGoals(rows) {
 
 export async function saveWeekPlan(weekStart, plannedDays, skipped = false) {
   await write({ put: { weekPlans: [{ weekStart, plannedDays: [...plannedDays].sort(), skipped, createdAt: new Date().toISOString() }] } });
+}
+
+// v1.4 한 주 시작 바꾸기: 설정과 함께 주간 계획을 새 기준으로 다시 묶는다(한 트랜잭션). 기록·목표는 그대로
+export async function setWeekStart(wso) {
+  const all = await readAll(['settings', 'weekPlans']);
+  const s = settingsOf(all.settings);
+  const v = wso === 0 ? 0 : 1;
+  await write({ clear: ['weekPlans'], put: { settings: [{ id: 'settings', ...s, weekStartsOn: v }], weekPlans: R.regroupWeekPlans(all.weekPlans, v) } });
 }
 
 export async function saveSettings(patch) {
@@ -195,7 +208,7 @@ export async function importData(obj, dbName = DB_NAME) {
       clear: STORES,
       put: {
         days, goals: d.goals, weekPlans: d.weekPlans,
-        settings: [{ id: 'settings', ...R.DEFAULT_SETTINGS, ...s }],
+        settings: [{ id: 'settings', ...withDefaults(s) }],
         meta: [{ id: 'meta', schemaVersion: R.SCHEMA_VERSION }],
       },
     }, dbName);

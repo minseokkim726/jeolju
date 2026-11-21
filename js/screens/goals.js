@@ -39,12 +39,13 @@ export function periodAchievement(d, p) {
 export function render(root, d, ctx) {
   const s = d.settings;
   const u = s.unit;
-  const curWs = R.weekStartOf(d.today);
-  const goal = R.currentGoal(d.goals, d.today);
+  const wso = R.wsoOf(s);
+  const curWs = R.weekStartOf(d.today, wso);
+  const goal = R.currentGoal(d.goals, d.today, wso);
   const ev = R.weekEval(d.days, d.goals, curWs, s, d.today);
   const sug = R.goalSuggestion(d.days, d.goals, s, d.today);
-  const future = R.futureGoals(d.goals, d.today);
-  const periods = R.goalPeriods(d.goals).filter((p) => p.from <= curWs).reverse();
+  const future = R.futureGoals(d.goals, d.today, wso);
+  const periods = R.goalPeriods(d.goals, wso).filter((p) => p.from <= curWs).reverse();
   const it = ev.items || {};
 
   let sugHtml = '';
@@ -68,7 +69,7 @@ export function render(root, d, ctx) {
       </div>
       ${sugHtml}
       ${goal ? `<div class="card">
-        <div class="row center"><div class="h2">현재 목표</div><span class="tiny">${esc(fmtMDWp(goal.effectiveFrom))}부터</span></div>
+        <div class="row center"><div class="h2">현재 목표</div><span class="tiny">${esc(fmtMDWp(R.weekStartOf(goal.effectiveFrom, wso)))}부터</span></div>
         <div style="font-size:16px">${esc(goalSummary(goal, u, { limit: true }))}</div>
         <div class="tiny">이번 주 진행 (${esc(fmtMD(curWs))}~${esc(fmtMD(R.addDays(curWs, 6)))})</div>
         <div class="goal-items">
@@ -82,7 +83,7 @@ export function render(root, d, ctx) {
       </div>` : '<div class="card"><div class="small">목표가 없어요.</div><a class="btn outline" href="#/goal/new">목표 정하기</a></div>'}
       <div class="card">
         <div class="h2">다음 단계</div>
-        ${future.length ? future.map((g) => `<div class="list-row"><span>${esc(fmtMDWp(g.effectiveFrom))}부터 ${esc(goalSummary(g, u))}</span>
+        ${future.length ? future.map((g) => `<div class="list-row"><span>${esc(fmtMDWp(R.weekStartOf(g.effectiveFrom, wso)))}부터 ${esc(goalSummary(g, u))}</span>
           <span class="btns"><a class="btn small" href="#/goal/${encodeURIComponent(g.id)}">고치기</a><button type="button" class="btn small" data-del="${esc(g.id)}">삭제</button></span></div>`).join('')
           : '<div class="small">미리 깔아 둔 단계가 없어요. 2~3단계를 미리 정해 둘 수 있어요.</div>'}
         <a class="btn" href="#/goal/step">단계 추가</a>
@@ -136,7 +137,7 @@ export function render(root, d, ctx) {
   root.querySelectorAll('[data-del]').forEach((b) => b.addEventListener('click', async () => {
     const ok = await ask({ title: '이 단계를 지울까요?', message: '아직 시작하지 않은 단계라 지난 기록에는 영향이 없어요.', choices: [{ label: '삭제', value: true, kind: 'primary' }, { label: '취소', value: false }] });
     if (!ok) return;
-    try { await repo.deleteFutureGoal(b.dataset.del, d.today); toast('지웠어요'); } catch (e) { toast(e.message); }
+    try { await repo.deleteFutureGoal(b.dataset.del, d.today, wso); toast('지웠어요'); } catch (e) { toast(e.message); }
     ctx.refresh();
   }));
 }
